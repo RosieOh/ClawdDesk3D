@@ -4,6 +4,7 @@ import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { stateHex } from './mix';
 import { MAT } from './materials';
+import { FONT } from './fonts';
 import { CORE_POS } from './layout';
 import { useStore, type Session } from '../store';
 
@@ -66,10 +67,10 @@ function Drone({ session, index, total }: { session: Session; index: number; tot
         <torusGeometry args={[0.2, 0.012, 8, 40]} />
       </mesh>
       <Billboard position={[0, 0.32, 0]}>
-        <Text fontSize={0.085} anchorX="center" anchorY="bottom" color="#ffffff" outlineWidth={0.006} outlineColor="#000000">
+        <Text font={FONT.sans} fontSize={0.085} anchorX="center" anchorY="bottom" color="#ffffff" outlineWidth={0.006} outlineColor="#000000">
           {session.project}
         </Text>
-        <Text position={[0, -0.02, 0]} fontSize={0.055} anchorX="center" anchorY="top" color={stateHex(session.state, session.tool)} letterSpacing={0.12}>
+        <Text font={FONT.mono} position={[0, -0.02, 0]} fontSize={0.055} anchorX="center" anchorY="top" color={stateHex(session.state, session.tool)} letterSpacing={0.12}>
           {`${session.source.toUpperCase()} · ${session.state === 'TOOL_RUNNING' ? session.tool ?? 'TOOL' : session.state}`}
         </Text>
       </Billboard>

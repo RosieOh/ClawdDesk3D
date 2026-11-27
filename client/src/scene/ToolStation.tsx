@@ -4,6 +4,7 @@ import { Billboard, RoundedBox, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { mix, toolHex } from './mix';
 import { MAT } from './materials';
+import { FONT } from './fonts';
 import { TOOL_POS } from './layout';
 import { useStore } from '../store';
 
@@ -117,7 +118,7 @@ export function ToolStation() {
             <circleGeometry args={[0.035, 16]} />
             <meshBasicMaterial color={beamHex} toneMapped={false} />
           </mesh>
-          <Text position={[0.04, -0.005, 0.03]} fontSize={0.15} letterSpacing={0.02} anchorX="center" anchorY="middle" color={beamHex}>
+          <Text font={FONT.sans} position={[0.04, -0.005, 0.03]} fontSize={0.15} letterSpacing={0.02} anchorX="center" anchorY="middle" color={beamHex}>
             {label}
           </Text>
         </Billboard>

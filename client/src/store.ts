@@ -69,6 +69,9 @@ interface StoreState extends Derived {
 }
 
 const isActive = (s: AgentState) => s === 'GENERATING' || s === 'TOOL_RUNNING';
+const isResting = (s: AgentState) => s === 'IDLE' || s === 'OFFLINE';
+/** Stats track real work only: the simulator demo counts, a manual override on top of live data doesn't. */
+const isReal = (s: Pick<StoreState, 'connected' | 'override'>) => !s.connected || s.override == null;
 
 function derive(s: Pick<StoreState, 'connected' | 'live' | 'simSats' | 'override'>): Derived {
   const base = s.connected ? s.live : [SIM_MAIN];
@@ -113,19 +116,22 @@ export const useStore = create<StoreState>((set, get) => {
     const d = derive(next);
     const stats: Partial<StoreState> = {};
 
-    if (d.state !== prev.state) {
-      const now = Date.now();
-      if (d.state === 'GENERATING' && !isActive(prev.state)) {
-        const inWindow = prev.lastPromptAt > 0 && now - prev.lastPromptAt < COMBO_WINDOW_MS;
-        stats.combo = inWindow ? prev.combo + 1 : 1;
-        stats.lastPromptAt = now;
-      }
-      if (isActive(prev.state) && !isActive(d.state) && prev.focusSince != null) {
-        stats.focusAccum = prev.focusAccum + (now - prev.focusSince);
-        stats.focusSince = null;
-      } else if (!isActive(prev.state) && isActive(d.state)) {
-        stats.focusSince = now;
-      }
+    const now = Date.now();
+    const wasReal = isReal(prev);
+    const nowReal = isReal(next);
+    // A new prompt = leaving rest. Resuming after a permission prompt (WAITING) is the same turn.
+    if (nowReal && d.state === 'GENERATING' && isResting(prev.state)) {
+      const inWindow = prev.lastPromptAt > 0 && now - prev.lastPromptAt < COMBO_WINDOW_MS;
+      stats.combo = inWindow ? prev.combo + 1 : 1;
+      stats.lastPromptAt = now;
+    }
+    const wasFocused = wasReal && isActive(prev.state);
+    const nowFocused = nowReal && isActive(d.state);
+    if (wasFocused && !nowFocused && prev.focusSince != null) {
+      stats.focusAccum = prev.focusAccum + (now - prev.focusSince);
+      stats.focusSince = null;
+    } else if (!wasFocused && nowFocused) {
+      stats.focusSince = now;
     }
     set({ ...partial, ...d, ...stats });
   };

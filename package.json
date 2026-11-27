@@ -11,7 +11,8 @@
     "dev": "concurrently -k -n bridge,client -c magenta,cyan \"npm run dev -w server\" \"npm run dev -w client\"",
     "start": "npm run dev",
     "build": "npm run build -w client",
-    "test:hooks": "bash scripts/test-hooks.sh"
+    "test:hooks": "bash scripts/test-hooks.sh",
+    "test": "npm test -w server && npm run typecheck -w client"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

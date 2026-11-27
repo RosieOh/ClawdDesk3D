@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { COMBO_WINDOW_MS, MAX_SIM_SATELLITES, useStore, type AgentState } from '../store';
 import { STATE_HEX, stateHex } from '../scene/mix';
-import { playUiClick, setAudioEnabled } from '../audio';
+import { playUiClick } from '../audio';
 
 const glass = 'bg-white/[0.07] backdrop-blur-md border border-white/[0.12] shadow-[0_8px_32px_rgba(0,0,0,0.35)] rounded-2xl';
 
@@ -99,16 +99,11 @@ function StatsPanel() {
   const combo = useStore((s) => s.combo);
   const lastPromptAt = useStore((s) => s.lastPromptAt);
   const muted = useStore((s) => s.muted);
-  const setMuted = useStore((s) => s.setMuted);
+  const toggleMute = useStore((s) => s.toggleMute);
 
   const focus = focusAccum + (focusSince ? now - focusSince : 0);
   const comboLive = lastPromptAt > 0 && now - lastPromptAt < COMBO_WINDOW_MS ? combo : 0;
   const comboLeft = comboLive ? 1 - (now - lastPromptAt) / COMBO_WINDOW_MS : 0;
-
-  const toggleMute = () => {
-    setAudioEnabled(muted);
-    setMuted(!muted);
-  };
 
   return (
     <div className={`${glass} p-4 w-[min(240px,calc(100vw-32px))] pointer-events-auto`}>

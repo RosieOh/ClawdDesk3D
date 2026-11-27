@@ -3,7 +3,7 @@ import { Scene } from './scene/Scene';
 import { Hud } from './hud/Hud';
 import { connectBridge } from './bridge';
 import { useStore } from './store';
-import { playTransition, setAudioEnabled } from './audio';
+import { playTransition } from './audio';
 
 export default function App() {
   // Live hook bridge (falls back to simulator mode while disconnected)
@@ -22,9 +22,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== 'm' || e.metaKey || e.ctrlKey) return;
-      const { muted, setMuted } = useStore.getState();
-      setAudioEnabled(muted);
-      setMuted(!muted);
+      useStore.getState().toggleMute();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

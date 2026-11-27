@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { setAudioEnabled } from './audio';
 
 export type AgentState = 'OFFLINE' | 'IDLE' | 'WAITING' | 'GENERATING' | 'TOOL_RUNNING';
 
@@ -65,7 +66,7 @@ interface StoreState extends Derived {
   simulate: (state: AgentState, tool?: string | null) => void;
   addSatellite: () => void;
   clearSatellites: () => void;
-  setMuted: (m: boolean) => void;
+  toggleMute: () => void;
 }
 
 const isActive = (s: AgentState) => s === 'GENERATING' || s === 'TOOL_RUNNING';
@@ -181,7 +182,11 @@ export const useStore = create<StoreState>((set, get) => {
 
     clearSatellites: () => commit({ simSats: [] }),
 
-    setMuted: (muted) => set({ muted }),
+    toggleMute: () => {
+      const muted = !get().muted;
+      setAudioEnabled(!muted);
+      set({ muted });
+    },
   };
 });
 

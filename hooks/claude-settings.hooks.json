@@ -1,0 +1,119 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook/session-start >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:3001/hook/generating",
+            "timeout": 3,
+            "headers": {
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+            },
+            "allowedEnvVars": [
+              "CLAUDE_CODE_ENTRYPOINT"
+            ]
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:3001/hook/tool-use",
+            "timeout": 3,
+            "headers": {
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+            },
+            "allowedEnvVars": [
+              "CLAUDE_CODE_ENTRYPOINT"
+            ]
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:3001/hook/tool-done",
+            "timeout": 3,
+            "headers": {
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+            },
+            "allowedEnvVars": [
+              "CLAUDE_CODE_ENTRYPOINT"
+            ]
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:3001/hook/idle",
+            "timeout": 3,
+            "headers": {
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+            },
+            "allowedEnvVars": [
+              "CLAUDE_CODE_ENTRYPOINT"
+            ]
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:3001/hook/idle",
+            "timeout": 3,
+            "headers": {
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+            },
+            "allowedEnvVars": [
+              "CLAUDE_CODE_ENTRYPOINT"
+            ]
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:3001/hook/offline",
+            "timeout": 3,
+            "headers": {
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+            },
+            "allowedEnvVars": [
+              "CLAUDE_CODE_ENTRYPOINT"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

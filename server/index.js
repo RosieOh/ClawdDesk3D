@@ -5,10 +5,11 @@ import http from 'node:http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer } from 'ws';
-import { ROUTE_EVENTS, createSessionStore } from './core.js';
+import { ROUTE_EVENTS, createSessionStore, isAllowedOrigin, parseOriginList } from './core.js';
 
 const PORT = Number(process.env.CLAWDDESK_PORT || process.env.PORT) || 3001;
 const HOST = process.env.CLAWDDESK_HOST || '127.0.0.1'; // loopback only
+const EXTRA_ORIGINS = parseOriginList(process.env.CLAWDDESK_ALLOWED_ORIGINS);
 const SWEEP_INTERVAL_MS = 15 * 1000;
 
 const store = createSessionStore();
@@ -17,11 +18,20 @@ function snapshot(reason) {
   return { type: 'snapshot', reason, serverTime: Date.now(), sessions: store.list() };
 }
 
+const originOk = (origin) => isAllowedOrigin(origin, EXTRA_ORIGINS);
+
 // ---------------------------------------------------------------- HTTP
 
 const app = express();
 
-app.use(cors({ origin: true }));
+// Reject foreign browser origins *before* anything is parsed or processed.
+// Hooks and curl send no Origin header, so they always pass.
+app.use((req, res, next) => {
+  if (originOk(req.get('origin'))) return next();
+  console.warn(`[http] blocked origin ${req.get('origin')} ${req.method} ${req.path}`);
+  res.status(403).end();
+});
+app.use(cors({ origin: (origin, cb) => cb(null, originOk(origin)) }));
 app.use(express.json({ limit: '10mb', type: () => true }));
 
 function handle(defaultEvent, req) {
@@ -71,7 +81,14 @@ app.use((err, _req, res, _next) => {
 // ---------------------------------------------------------------- WebSocket
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({
+  server,
+  verifyClient: ({ origin }) => {
+    if (originOk(origin)) return true;
+    console.warn(`[ws] blocked origin ${origin}`);
+    return false;
+  },
+});
 wss.on('error', () => {}); // listen errors are reported by server.on('error') below
 
 function broadcast(msg) {

@@ -77,6 +77,36 @@ export function isAttentionNotification(payload) {
   return /permission|approve|approval/i.test(String(payload.message || ''));
 }
 
+// ---------------------------------------------------------------- origin policy
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Browser requests carry an Origin; Claude Code hooks and curl don't.
+ * Only loopback pages (the dev client, any port) plus explicitly listed origins may talk to the bridge,
+ * so an arbitrary website can neither read session paths over WebSocket nor fake hook events.
+ * @param {string|undefined} origin
+ * @param {string[]} [extra] additional exact origins allowed
+ */
+export function isAllowedOrigin(origin, extra = []) {
+  if (origin === undefined || origin === '') return true;
+  if (extra.includes(origin)) return true;
+  let url;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false; // includes the literal "null" origin
+  }
+  return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_HOSTS.has(url.hostname);
+}
+
+export function parseOriginList(raw) {
+  return String(raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 // ---------------------------------------------------------------- state machine
 
 export function createSessionStore({ now = () => Date.now() } = {}) {

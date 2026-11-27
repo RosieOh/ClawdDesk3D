@@ -5,194 +5,60 @@ import http from 'node:http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer } from 'ws';
+import { ROUTE_EVENTS, createSessionStore } from './core.js';
 
 const PORT = Number(process.env.CLAWDDESK_PORT || process.env.PORT) || 3001;
 const HOST = process.env.CLAWDDESK_HOST || '127.0.0.1'; // loopback only
-const STALE_MS = 10 * 60 * 1000; // drop sessions after 10 min of silence
-const OFFLINE_LINGER_MS = 60 * 1000; // keep ended sessions visible for 1 min
 const SWEEP_INTERVAL_MS = 15 * 1000;
 
-/** @typedef {'OFFLINE'|'IDLE'|'GENERATING'|'TOOL_RUNNING'} AgentState */
-
-/**
- * @typedef {Object} Session
- * @property {string} id
- * @property {string} cwd
- * @property {string} project
- * @property {string} source        'vscode' | 'cli' | other entrypoint | 'unknown'
- * @property {AgentState} state
- * @property {string|null} tool     tool currently running (TOOL_RUNNING only)
- * @property {string|null} lastTool most recent tool seen
- * @property {string} lastEvent
- * @property {number} prompts
- * @property {number} startedAt
- * @property {number} lastSeen
- */
-
-/** @type {Map<string, Session>} */
-const sessions = new Map();
-
-// ---------------------------------------------------------------- helpers
-
-function projectFromCwd(cwd) {
-  if (!cwd || typeof cwd !== 'string') return 'unknown';
-  const parts = cwd.split(/[\\/]+/).filter(Boolean);
-  return parts[parts.length - 1] || cwd;
-}
-
-function normalizeSource(raw) {
-  const v = String(raw || '').toLowerCase().trim();
-  if (!v) return 'unknown';
-  if (v.includes('vscode') || v.includes('cursor') || v.includes('windsurf')) return 'vscode';
-  if (v.includes('jetbrains')) return 'jetbrains';
-  if (v === 'cli') return 'cli';
-  return v;
-}
-
-function shortToolName(name) {
-  if (!name || typeof name !== 'string') return 'Tool';
-  // mcp__server__tool_name -> tool_name
-  if (name.startsWith('mcp__')) return name.split('__').pop() || name;
-  return name;
-}
+const store = createSessionStore();
 
 function snapshot(reason) {
-  return {
-    type: 'snapshot',
-    reason,
-    serverTime: Date.now(),
-    sessions: [...sessions.values()].sort((a, b) => b.lastSeen - a.lastSeen),
-  };
-}
-
-// ---------------------------------------------------------------- state transitions
-
-/**
- * @param {AgentState} state
- * @param {any} body hook JSON payload
- * @param {import('express').Request} req
- */
-function applyHook(state, body, req) {
-  const payload = body && typeof body === 'object' ? body : {};
-  const rawId = payload.session_id || req.get('x-session-id');
-  if (!rawId && !payload.cwd) return; // nothing to attribute this to
-  const id = String(rawId || 'default');
-  const now = Date.now();
-
-  let s = sessions.get(id);
-  if (!s) {
-    s = {
-      id,
-      cwd: '',
-      project: 'unknown',
-      source: 'unknown',
-      state: 'IDLE',
-      tool: null,
-      lastTool: null,
-      lastEvent: '',
-      prompts: 0,
-      startedAt: now,
-      lastSeen: now,
-    };
-    sessions.set(id, s);
-  }
-
-  if (payload.cwd) {
-    s.cwd = payload.cwd;
-    s.project = projectFromCwd(payload.cwd);
-  }
-  const src = normalizeSource(req.get('x-claude-entrypoint') || payload.entrypoint);
-  if (src !== 'unknown') s.source = src;
-
-  const prev = s.state;
-  s.state = state;
-  s.lastSeen = now;
-  s.lastEvent = payload.hook_event_name || state;
-
-  if (state === 'TOOL_RUNNING') {
-    s.tool = shortToolName(payload.tool_name);
-    s.lastTool = s.tool;
-  } else {
-    s.tool = null;
-  }
-
-  if (state === 'GENERATING' && payload.hook_event_name !== 'PostToolUse' && prev !== 'GENERATING') {
-    s.prompts += 1;
-  }
-
-  const toolTag = s.tool ? ` (${s.tool})` : '';
-  console.log(
-    `[hook] ${s.lastEvent.padEnd(16)} ${s.project.padEnd(20)} ${prev} -> ${state}${toolTag}  [${s.source}] ${id.slice(0, 8)}`,
-  );
-
-  broadcast(snapshot('hook'));
-}
-
-function sweep() {
-  const now = Date.now();
-  let changed = false;
-  for (const [id, s] of sessions) {
-    const age = now - s.lastSeen;
-    if (age > STALE_MS || (s.state === 'OFFLINE' && age > OFFLINE_LINGER_MS)) {
-      sessions.delete(id);
-      changed = true;
-      console.log(`[sweep] expired ${s.project} ${id.slice(0, 8)}`);
-    }
-  }
-  if (changed) broadcast(snapshot('sweep'));
+  return { type: 'snapshot', reason, serverTime: Date.now(), sessions: store.list() };
 }
 
 // ---------------------------------------------------------------- HTTP
 
 const app = express();
+
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '10mb', type: () => true }));
+
+function handle(defaultEvent, req) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const event = body.hook_event_name || defaultEvent;
+  if (!event) return;
+  const sessionId = req.get('x-session-id');
+  const prev = store.get(body.session_id || sessionId || 'default')?.state;
+  const s = store.apply(event, body, { entrypoint: req.get('x-claude-entrypoint'), sessionId });
+  if (!s) return;
+  const toolTag = s.tool ? ` (${s.tool}${s.running > 1 ? ` +${s.running - 1}` : ''})` : '';
+  console.log(
+    `[hook] ${event.padEnd(18)} ${s.project.padEnd(20)} ${prev ?? 'NEW'} -> ${s.state}${toolTag}  [${s.source}] ${s.id.slice(0, 8)}`,
+  );
+  broadcast(snapshot('hook'));
+}
 
 /**
  * Respond 200 with an empty body *first* (empty 2xx = "success, no decision"),
  * then process — Claude Code is never blocked by the visualizer.
+ * The payload's hook_event_name wins over the route, so e.g. Notification posted to /hook/idle is handled correctly.
  */
-const hook = (state) => (req, res) => {
+const hook = (defaultEvent) => (req, res) => {
   res.status(200).end();
   try {
-    applyHook(state, req.body, req);
+    handle(defaultEvent, req);
   } catch (err) {
     console.error('[hook] failed to process payload:', err);
   }
 };
 
-app.post('/hook/session-start', hook('IDLE'));
-app.post('/hook/generating', hook('GENERATING'));
-app.post('/hook/tool-use', hook('TOOL_RUNNING'));
-app.post('/hook/tool-done', hook('GENERATING')); // PostToolUse: back to thinking
-app.post('/hook/idle', hook('IDLE'));
-app.post('/hook/offline', hook('OFFLINE'));
-
-// Generic endpoint: dispatch on hook_event_name.
-const EVENT_MAP = {
-  SessionStart: 'IDLE',
-  UserPromptSubmit: 'GENERATING',
-  PreToolUse: 'TOOL_RUNNING',
-  PostToolUse: 'GENERATING',
-  PostToolUseFailure: 'GENERATING',
-  Stop: 'IDLE',
-  StopFailure: 'IDLE',
-  Notification: 'IDLE',
-  SessionEnd: 'OFFLINE',
-};
-app.post('/hook', (req, res) => {
-  res.status(200).end();
-  try {
-    const state = EVENT_MAP[req.body?.hook_event_name];
-    if (state) applyHook(state, req.body, req);
-  } catch (err) {
-    console.error('[hook] failed to process payload:', err);
-  }
-});
+for (const [route, event] of Object.entries(ROUTE_EVENTS)) app.post(`/hook/${route}`, hook(event));
+app.post('/hook', hook(undefined)); // generic: dispatch on hook_event_name only
 
 app.get('/state', (_req, res) => res.json(snapshot('poll')));
 app.get('/', (_req, res) =>
-  res.json({ name: 'clawddesk-bridge', ok: true, sessions: sessions.size, ws: `ws://${HOST}:${PORT}` }),
+  res.json({ name: 'clawddesk-bridge', ok: true, sessions: store.size, ws: `ws://${HOST}:${PORT}` }),
 );
 
 // Malformed JSON or anything else: still 200 so hooks never error out.
@@ -233,7 +99,11 @@ const heartbeat = setInterval(() => {
   }
 }, 30_000);
 
-const sweeper = setInterval(sweep, SWEEP_INTERVAL_MS);
+const sweeper = setInterval(() => {
+  const removed = store.sweep();
+  for (const s of removed) console.log(`[sweep] expired ${s.project} ${s.id.slice(0, 8)}`);
+  if (removed.length) broadcast(snapshot('sweep'));
+}, SWEEP_INTERVAL_MS);
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {

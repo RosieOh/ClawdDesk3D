@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type AgentState = 'OFFLINE' | 'IDLE' | 'GENERATING' | 'TOOL_RUNNING';
+export type AgentState = 'OFFLINE' | 'IDLE' | 'WAITING' | 'GENERATING' | 'TOOL_RUNNING';
 
 export interface Session {
   id: string;
@@ -30,7 +30,7 @@ const SIM_MAIN: Session = {
 };
 
 const SIM_PROJECTS = ['api-gateway', 'web-app', 'infra', 'docs-site', 'ml-pipeline', 'mobile'];
-const SIM_STATES: AgentState[] = ['IDLE', 'GENERATING', 'TOOL_RUNNING'];
+const SIM_STATES: AgentState[] = ['IDLE', 'WAITING', 'GENERATING', 'TOOL_RUNNING'];
 const SIM_TOOLS = ['Read', 'Edit', 'Bash', 'Grep', 'Write'];
 
 interface Derived {

@@ -8,6 +8,7 @@ const glass = 'bg-white/[0.07] backdrop-blur-md border border-white/[0.12] shado
 const STATE_LABEL: Record<AgentState, string> = {
   OFFLINE: 'OFFLINE',
   IDLE: 'IDLE',
+  WAITING: 'NEEDS YOU',
   GENERATING: 'GENERATING',
   TOOL_RUNNING: 'TOOL RUNNING',
 };
@@ -172,12 +173,13 @@ function Dock() {
   const actions: DockAction[] = [
     { label: 'Offline', key: '1', run: () => simulate('OFFLINE'), active: state === 'OFFLINE', color: STATE_HEX.OFFLINE },
     { label: 'Idle', key: '2', run: () => simulate('IDLE'), active: state === 'IDLE', color: STATE_HEX.IDLE },
-    { label: 'Generating', key: '3', run: () => simulate('GENERATING'), active: state === 'GENERATING', color: STATE_HEX.GENERATING },
-    { label: 'Tool: Edit', key: '4', run: () => simulate('TOOL_RUNNING', 'Edit'), active: state === 'TOOL_RUNNING' && tool === 'Edit', color: stateHex('TOOL_RUNNING', 'Edit') },
-    { label: 'Tool: Bash', key: '5', run: () => simulate('TOOL_RUNNING', 'Bash'), active: state === 'TOOL_RUNNING' && tool === 'Bash', color: stateHex('TOOL_RUNNING', 'Bash') },
+    { label: 'Waiting', key: '3', run: () => simulate('WAITING'), active: state === 'WAITING', color: STATE_HEX.WAITING },
+    { label: 'Generating', key: '4', run: () => simulate('GENERATING'), active: state === 'GENERATING', color: STATE_HEX.GENERATING },
+    { label: 'Tool: Edit', key: '5', run: () => simulate('TOOL_RUNNING', 'Edit'), active: state === 'TOOL_RUNNING' && tool === 'Edit', color: stateHex('TOOL_RUNNING', 'Edit') },
+    { label: 'Tool: Bash', key: '6', run: () => simulate('TOOL_RUNNING', 'Bash'), active: state === 'TOOL_RUNNING' && tool === 'Bash', color: stateHex('TOOL_RUNNING', 'Bash') },
     {
       label: satCount >= MAX_SIM_SATELLITES ? 'Satellites full' : '+ Add Satellite',
-      key: '6',
+      key: '7',
       run: addSatellite,
       active: false,
       color: '#ffffff',
@@ -240,7 +242,7 @@ export function Hud() {
         <StatsPanel />
       </div>
       <div className="flex flex-col items-center gap-2">
-        <div className="hidden font-mono text-[10px] tracking-widest text-white/30 sm:block">DRAG TO ORBIT · SCROLL TO ZOOM · 1–6 TO PLAY · M TO MUTE</div>
+        <div className="hidden font-mono text-[10px] tracking-widest text-white/30 sm:block">DRAG TO ORBIT · SCROLL TO ZOOM · 1–7 TO PLAY · M TO MUTE</div>
         <Dock />
       </div>
     </div>

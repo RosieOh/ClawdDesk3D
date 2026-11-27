@@ -5,6 +5,7 @@ import type { AgentState } from '../store';
 export const STATE_HEX: Record<AgentState, string> = {
   OFFLINE: '#7d8fa8',
   IDLE: '#ff9a4d',
+  WAITING: '#ff5d8f',
   GENERATING: '#ffb35c',
   TOOL_RUNNING: '#2ee6c5',
 };
@@ -12,6 +13,7 @@ export const STATE_HEX: Record<AgentState, string> = {
 const BG_HEX: Record<AgentState, string> = {
   OFFLINE: '#151a22',
   IDLE: '#231916',
+  WAITING: '#24141b',
   GENERATING: '#2a1711',
   TOOL_RUNNING: '#0d1e1d',
 };
@@ -35,6 +37,8 @@ export const mix = {
   idle: 0,
   gen: 0,
   tool: 0,
+  /** blocked on the human (permission prompt). Moves like idle, plus an attention blink. */
+  wait: 0,
   /** current smoothed accent color */
   color: new THREE.Color(STATE_HEX.OFFLINE),
   bg: new THREE.Color(BG_HEX.OFFLINE),
@@ -47,7 +51,8 @@ const tmp = new THREE.Color();
 export function stepMix(state: AgentState, tool: string | null, dt: number) {
   const k = 3.2;
   mix.offline = THREE.MathUtils.damp(mix.offline, state === 'OFFLINE' ? 1 : 0, k, dt);
-  mix.idle = THREE.MathUtils.damp(mix.idle, state === 'IDLE' ? 1 : 0, k, dt);
+  mix.idle = THREE.MathUtils.damp(mix.idle, state === 'IDLE' || state === 'WAITING' ? 1 : 0, k, dt);
+  mix.wait = THREE.MathUtils.damp(mix.wait, state === 'WAITING' ? 1 : 0, k, dt);
   mix.gen = THREE.MathUtils.damp(mix.gen, state === 'GENERATING' ? 1 : 0, k, dt);
   mix.tool = THREE.MathUtils.damp(mix.tool, state === 'TOOL_RUNNING' ? 1 : 0, k, dt);
 

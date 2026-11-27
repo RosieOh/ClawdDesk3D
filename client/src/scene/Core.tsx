@@ -26,7 +26,9 @@ export function Core() {
 
   useFrame((st, dt) => {
     const t = st.clock.elapsedTime;
-    const { offline, idle, gen, tool } = mix;
+    const { offline, idle, gen, tool, wait } = mix;
+    // Attention blink while waiting for permission: sharp on/off at ~1.25 Hz
+    const blink = wait * (Math.sin(t * 7.85) > 0 ? 1 : 0);
     const awake = 1 - offline;
 
     // Float / breathe
@@ -48,7 +50,7 @@ export function Core() {
     // Visor: soft pulse
     visorMat.current.emissive.copy(mix.color);
     visorMat.current.emissiveIntensity =
-      0.1 * offline + (1.2 + Math.sin(t * 2.2) * 0.9) * idle + 3.5 * gen + (2 + Math.sin(t * 10) * 1.2) * tool;
+      0.1 * offline + (1.2 + Math.sin(t * 2.2) * 0.9) * idle * (1 - wait) + 3.5 * gen + (2 + Math.sin(t * 10) * 1.2) * tool + 5 * blink;
     visor.current.rotation.z = Math.sin(t * 0.7) * 0.08 * awake;
 
     // Gyroscope: counter-rotating rings (static when offline)
@@ -65,7 +67,7 @@ export function Core() {
     glowRingMat.current.emissiveIntensity = 0.15 * offline + 1.5 * idle + 4 * gen + 2.5 * tool;
 
     light.current.color.copy(mix.color);
-    light.current.intensity = 0.4 * offline + 7 * idle + (18 + Math.sin(t * 20) * 3) * gen + 11 * tool;
+    light.current.intensity = 0.4 * offline + 7 * idle + (18 + Math.sin(t * 20) * 3) * gen + 11 * tool + 6 * blink;
 
     // Dock "charging" glow is strongest while asleep
     dockMat.current.emissive.copy(mix.color);

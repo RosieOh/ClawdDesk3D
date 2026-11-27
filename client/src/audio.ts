@@ -88,6 +88,10 @@ export function playTransition(state: AgentState) {
     case 'IDLE':
       click(1800, 0.45, [520, 660]);
       break;
+    case 'WAITING':
+      // two-tone chime: "your turn"
+      click(2200, 0.4, [880, 1320]);
+      break;
     case 'GENERATING':
       click(2600, 0.55, [660, 990]);
       break;

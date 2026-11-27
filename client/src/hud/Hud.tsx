@@ -37,6 +37,7 @@ function StatusPanel() {
   const connected = useStore((s) => s.connected);
   const state = useStore((s) => s.state);
   const tool = useStore((s) => s.tool);
+  const running = useStore((s) => s.running);
   const project = useStore((s) => s.project);
   const overridden = useStore((s) => s.override != null);
   const color = stateHex(state, tool);
@@ -80,6 +81,7 @@ function StatusPanel() {
             style={{ background: tool ? `${color}22` : 'rgba(255,255,255,0.06)', color: tool ? color : '#fff' }}
           >
             {tool ?? '—'}
+            {tool && running > 1 ? <span className="ml-1 opacity-70">+{running - 1}</span> : null}
           </div>
         </div>
       </div>

@@ -9,6 +9,8 @@ export interface Session {
   source: string;
   state: AgentState;
   tool: string | null;
+  /** tools currently in flight (parallel tool calls) */
+  running?: number;
   lastTool?: string | null;
   prompts?: number;
   startedAt: number;
@@ -36,6 +38,8 @@ const SIM_TOOLS = ['Read', 'Edit', 'Bash', 'Grep', 'Write'];
 interface Derived {
   state: AgentState;
   tool: string | null;
+  /** in-flight tool count of the primary session */
+  running: number;
   project: string;
   primaryId: string | null;
   satellites: Session[];
@@ -74,9 +78,11 @@ function derive(s: Pick<StoreState, 'connected' | 'live' | 'simSats' | 'override
 
   let state: AgentState = primary?.state ?? 'OFFLINE';
   let tool = primary?.tool ?? null;
+  let running = primary?.running ?? (tool ? 1 : 0);
   if (s.override) {
     state = s.override.state;
     tool = s.override.tool;
+    running = tool ? 1 : 0;
   }
 
   const satellites = [...active.filter((x) => x.id !== primary?.id), ...s.simSats];
@@ -90,6 +96,7 @@ function derive(s: Pick<StoreState, 'connected' | 'live' | 'simSats' | 'override
   return {
     state,
     tool,
+    running,
     project: primary?.project ?? '—',
     primaryId: primary?.id ?? null,
     satellites,

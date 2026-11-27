@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { COMBO_WINDOW_MS, MAX_SIM_SATELLITES, useStore, type AgentState } from '../store';
 import { STATE_HEX, stateHex } from '../scene/mix';
 import { playUiClick } from '../audio';
@@ -183,10 +183,13 @@ function Dock() {
     },
   ];
 
+  // Register the shortcut listener once; it reads the latest actions through a ref.
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement)?.tagName === 'INPUT') return;
-      const a = actions.find((x) => x.key === e.key);
+      const a = actionsRef.current.find((x) => x.key === e.key);
       if (a) {
         playUiClick();
         a.run();
@@ -195,7 +198,7 @@ function Dock() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  });
+  }, [clearSatellites]);
 
   return (
     <div className={`${glass} pointer-events-auto flex max-w-[calc(100vw-32px)] flex-wrap items-center justify-center gap-1.5 p-2`}>

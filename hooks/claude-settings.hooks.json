@@ -64,7 +64,25 @@
         ]
       }
     ],
-    "Stop": [
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:3001/hook/tool-done",
+            "timeout": 3,
+            "headers": {
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+            },
+            "allowedEnvVars": [
+              "CLAUDE_CODE_ENTRYPOINT"
+            ]
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "Notification": [
       {
         "hooks": [
           {
@@ -81,7 +99,29 @@
         ]
       }
     ],
-    "Notification": [
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
       {
         "hooks": [
           {

@@ -51,7 +51,7 @@ export const clipUrl = (path: string) => `/voicepack/${path.split('/').map(encod
 export async function loadPack(): Promise<VoicePack | null> {
   try {
     const res = await fetch('/voicepack/voicepack.json', { cache: 'no-cache' });
-    if (!res.ok) return null;
+    if (!res.ok || res.status === 204) return null; // 204: no pack installed
     return parsePack(await res.json());
   } catch {
     return null;

@@ -45,7 +45,8 @@ export function voicepackPlugin(root: string): Plugin {
     }
     fs.stat(file, (err, st) => {
       if (err || !st.isFile()) {
-        res.statusCode = 404;
+        // No pack installed is the normal case: answer "nothing here" without a 404 in every console.
+        res.statusCode = file === path.join(path.resolve(root), 'voicepack.json') ? 204 : 404;
         return res.end();
       }
       res.setHeader('Content-Type', TYPES[path.extname(file).toLowerCase()]);

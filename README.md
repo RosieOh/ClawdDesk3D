@@ -14,6 +14,17 @@ Claude Code ──hooks (HTTP POST)──▶ bridge :3001 (Rust, axum) ──Web
 | `GENERATING` | `UserPromptSubmit`, `PostToolUse(Failure)` (last tool done), `ElicitationResult`, `PostCompact` after auto-compaction | counter-spinning gyroscope, bloom, token fountain, keyboard clacking |
 | `TOOL_RUNNING` | `PreToolUse` (stays until *every* parallel tool is done), `PreCompact` | cyan (emerald for Edit/Write) laser scanning the code cube, rack LEDs, tool badge (`Bash +1` when several run) |
 
+## Approve from the desk
+
+When Claude Code asks for permission (a `PermissionRequest`), the desk shows a card with the project, the tool and what it wants to do (the command, file or URL), a countdown and **Approve / Deny**. The answer goes straight back to Claude Code, which then runs the tool or carries on without it.
+
+- The bridge only holds the request while a desk is **visible on screen**; with no desk, or the tab hidden or minimized, Claude Code shows its normal prompt immediately.
+- If nobody answers within 30 s (`CLAWDDESK_APPROVAL_TIMEOUT`, seconds), the normal prompt appears.
+- Approve passes the original input back unchanged, so your deny/ask permission rules still apply. Tools that need your own input (`AskUserQuestion`, `ExitPlanMode`) are never answered from the desk.
+- Answers are only accepted from the desk page (an allowed `Origin`), never from other websites; there is no keyboard shortcut, so nothing gets approved by accident.
+
+This uses the `PermissionRequest` **http** hook (`/hook/permission`); run `npm run hooks:install` again after updating.
+
 ## JARVIS voice
 
 Press **V** (or the **VOICE** button) and the desk talks, in English with a calm British butler voice by default (**EN/KO** switches to Korean):
@@ -63,7 +74,7 @@ npm run voice:record    # read one sentence; saves voice-lab/my-voice/reference.
 npm run voice:serve     # http://127.0.0.1:3003, keep it running next to npm run dev
 ```
 
-The page picks the lab up within ~15 s (the voice button turns into **MY VOICE**) and uses it for English lines; Korean keeps the system voice (the model speaks English and Chinese). A short line takes ~1.5-3 s to generate the first time on an M-series Mac, then comes from the cache in `voice-lab/cache/`. `--steps` / `--method` trade quality for speed (default: euler, 16 steps). The server answers only loopback pages and runs everything on one worker thread. `voice-lab/my-voice/`, `voice-lab/cache/` and `voice-lab/.venv/` are gitignored. Model weights are CC-BY-NC: fine for personal use, not for commercial use.
+The bridge notices the lab within ~10 s and tells the page (the voice button turns into **MY VOICE**) and uses it for English lines; Korean keeps the system voice (the model speaks English and Chinese). A short line takes ~1.5-3 s to generate the first time on an M-series Mac, then comes from the cache in `voice-lab/cache/`. `--steps` / `--method` trade quality for speed (default: euler, 16 steps). The server answers only loopback pages and runs everything on one worker thread. `voice-lab/my-voice/`, `voice-lab/cache/` and `voice-lab/.venv/` are gitignored. Model weights are CC-BY-NC: fine for personal use, not for commercial use.
 
 Priority when speaking: a voice-pack clip for that moment → your cloned voice (English) → the browser's voice.
 
@@ -118,7 +129,8 @@ It registers these events:
 | `PreToolUse` | http, matcher `*` | `/hook/tool-use` |
 | `PostToolUse`, `PostToolUseFailure` | http, matcher `*` | `/hook/tool-done` |
 | `Notification`, `Stop` | http | `/hook/idle` |
-| `PermissionRequest`, `Elicitation`, `ElicitationResult` | command (curl), matcher `*` | `/hook` |
+| `PermissionRequest` | http, matcher `*`, timeout 45 s | `/hook/permission` (answers with the desk's decision) |
+| `Elicitation`, `ElicitationResult` | command (curl), matcher `*` | `/hook` |
 | `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact` | command (curl) | `/hook` |
 | `SessionEnd` | http | `/hook/offline` |
 

@@ -7,3 +7,8 @@ target
 # Local media you may not redistribute (e.g. voice packs). Never commit these.
 assets/
 voicepack/
+
+# Voice lab: local Python env, your recordings, generated audio cache
+voice-lab/.venv/
+voice-lab/my-voice/
+voice-lab/cache/

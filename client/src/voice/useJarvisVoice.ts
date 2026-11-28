@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { useStore, type Session } from '../store';
 import { Announcer, DEFAULT_MIN_TURN_MS, phrase } from './announcer';
 import { engines, sayLine } from './say';
+import { ownCommands, reportCommand } from './assistant';
 import { hush, unlockSpeech } from './speech';
 import { loadPack, stopClips, unlockClips } from './voicepack';
 
@@ -31,7 +32,10 @@ export function useJarvisVoice() {
       const sessions = effectiveSessions(s);
       const lines = announcer.update(sessions, Date.now(), { minTurnMs: s.override ? 0 : DEFAULT_MIN_TURN_MS });
       const several = sessions.filter((x) => x.state !== 'OFFLINE').length > 1;
+      // Headless runs started from the desk (`claude -p`) are reported with their answer instead.
+      const headless = new Set(sessions.filter((x) => x.source.startsWith('sdk')).map((x) => x.id));
       for (const line of lines) {
+        if (headless.has(line.sessionId) && (line.kind === 'done' || line.kind === 'started' || line.kind === 'ended')) continue;
         const text = phrase(line, s.voiceLang, several);
         const now = Date.now();
         if (text === lastText && now - lastAt < DEDUPE_MS) continue;
@@ -61,6 +65,12 @@ export function useJarvisVoice() {
         // Switching between simulator and live: the next session list is a fresh baseline.
         announcer.reset();
         awaitingBaseline = true;
+      }
+      // Commands this desk sent: report Claude's answer when they finish.
+      if (s.commands !== prev.commands) {
+        for (const c of s.commands) {
+          if (c.status !== 'running' && ownCommands.delete(c.id)) reportCommand(c, s.voiceLang);
+        }
       }
       if (s.sessions === prev.sessions && s.state === prev.state && s.tool === prev.tool) return;
       if (awaitingBaseline && s.live !== prev.live) {

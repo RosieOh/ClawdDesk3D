@@ -2,6 +2,7 @@
 //! Receives Claude Code hook POSTs and broadcasts normalized session state over WebSocket.
 
 pub mod approvals;
+pub mod commands;
 pub mod core;
 pub mod transcript;
 pub mod voicelab;
@@ -34,6 +35,7 @@ use tokio::{net::TcpListener, sync::broadcast};
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 
 use crate::approvals::{Approvals, Behavior, Pending, decision_output, summarize};
+use crate::commands::{Commands, Status as CommandStatus};
 use crate::core::{
     Meta, ROUTE_EVENTS, Session, SessionStore, is_allowed_origin, parse_origin_list,
 };
@@ -71,6 +73,8 @@ struct AppState {
     app_approver_until: Arc<Mutex<Option<Instant>>>,
     /// the local voice lab, while it answers /health
     voice_lab: Arc<Mutex<Option<LabInfo>>>,
+    /// tasks sent to Claude from the desk (spoken commands)
+    commands: Arc<Mutex<Commands>>,
     store: Arc<Mutex<SessionStore>>,
     tx: broadcast::Sender<String>,
     extra_origins: Arc<Vec<String>>,
@@ -91,6 +95,7 @@ fn snapshot(
     sessions: Vec<Session>,
     approvals: Vec<Pending>,
     voice_lab: Option<LabInfo>,
+    commands: Vec<commands::Command>,
 ) -> String {
     json!({
         "type": "snapshot",
@@ -99,6 +104,7 @@ fn snapshot(
         "sessions": sessions,
         "approvals": approvals,
         "voiceLab": voice_lab,
+        "commands": commands,
     })
     .to_string()
 }
@@ -108,7 +114,8 @@ impl AppState {
         let sessions = self.store.lock().unwrap().list();
         let approvals = self.approvals.lock().unwrap().list();
         let voice_lab = self.voice_lab.lock().unwrap().clone();
-        snapshot(reason, sessions, approvals, voice_lab)
+        let commands = self.commands.lock().unwrap().list();
+        snapshot(reason, sessions, approvals, voice_lab, commands)
     }
 
     fn broadcast(&self, reason: &str) {
@@ -354,6 +361,80 @@ async fn decide(
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandBody {
+    text: String,
+    /// run in this session's project folder
+    session_id: String,
+}
+
+/// A task for Claude from the desk (a spoken command): `claude -p` in the session's folder.
+/// Like approvals, only the desk page or the menu bar app may send one.
+async fn command(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CommandBody>,
+) -> Response {
+    if header(&headers, ORIGIN.as_str()).is_none() && header(&headers, "x-clawddesk-app").is_none()
+    {
+        return (StatusCode::FORBIDDEN, "send commands from the desk").into_response();
+    }
+    let prompt = body.text.trim().to_string();
+    if prompt.is_empty() || prompt.chars().count() > commands::MAX_PROMPT {
+        return (StatusCode::BAD_REQUEST, "text must be 1-2000 characters").into_response();
+    }
+    let Some(session) = app.store.lock().unwrap().get(&body.session_id).cloned() else {
+        return (StatusCode::NOT_FOUND, "no such session").into_response();
+    };
+    if session.cwd.is_empty() || !std::path::Path::new(&session.cwd).is_dir() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "that session has no project folder",
+        )
+            .into_response();
+    }
+    let Some(claude) = commands::find_claude() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "claude CLI not found (set CLAWDDESK_CLAUDE)",
+        )
+            .into_response();
+    };
+    let cmd = {
+        let mut cmds = app.commands.lock().unwrap();
+        if cmds.running() >= commands::MAX_RUNNING {
+            return (StatusCode::TOO_MANY_REQUESTS, "already running two tasks").into_response();
+        }
+        cmds.start(
+            prompt.clone(),
+            session.project.clone(),
+            session.cwd.clone(),
+            now_ms(),
+        )
+    };
+    println!("[command] {} in {}: {prompt}", cmd.id, session.project);
+    app.broadcast("command");
+
+    let id = cmd.id.clone();
+    let worker = app.clone();
+    tokio::spawn(async move {
+        let outcome = commands::run_claude(&claude, &prompt, &session.cwd).await;
+        let (status, text) = match outcome {
+            Ok(text) => (CommandStatus::Done, text),
+            Err(err) => (CommandStatus::Failed, err),
+        };
+        println!("[command] {id} {status:?}");
+        worker
+            .commands
+            .lock()
+            .unwrap()
+            .finish(&id, status, text, now_ms());
+        worker.broadcast("command");
+    });
+    (StatusCode::ACCEPTED, Json(cmd)).into_response()
+}
+
+#[derive(serde::Deserialize)]
 struct AppPresence {
     approvals: bool,
 }
@@ -581,6 +662,7 @@ pub async fn serve(
         approvals: Arc::new(Mutex::new(Approvals::default())),
         approvers: Arc::new(AtomicUsize::new(0)),
         voice_lab: Arc::new(Mutex::new(None)),
+        commands: Arc::new(Mutex::new(Commands::default())),
         app_approver_until: Arc::new(Mutex::new(None)),
         approval_timeout,
     };
@@ -600,6 +682,7 @@ pub async fn serve(
         .route("/hook/permission", post(permission_hook))
         .route("/approvals/{id}", post(decide))
         .route("/presence/app", post(app_presence))
+        .route("/command", post(command))
         .route("/hook/{route}", post(hook_route))
         .layer(cors)
         .layer(middleware::from_fn_with_state(app.clone(), origin_guard)) // outermost: runs first
@@ -623,9 +706,10 @@ pub async fn serve(
                 if changed {
                     match &found {
                         Some(lab) => println!(
-                            "[voice lab] {} ({})",
-                            lab.voice,
-                            if lab.ready { "ready" } else { "loading" }
+                            "[voice lab] voice: {} ({}), transcription: {}",
+                            lab.voice.as_deref().unwrap_or("off"),
+                            if lab.ready { "ready" } else { "loading" },
+                            if lab.stt { "on" } else { "off" }
                         ),
                         None => println!("[voice lab] gone"),
                     }

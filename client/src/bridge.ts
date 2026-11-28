@@ -1,9 +1,27 @@
-import { useStore, type Approval, type Session } from './store';
+import { useStore, type Approval, type DeskCommand, type Session } from './store';
 
 const BRIDGE_URL: string =
   (import.meta.env.VITE_BRIDGE_URL as string | undefined) ?? 'ws://127.0.0.1:3001';
 /** Same server over HTTP (ws → http, wss → https). */
 export const BRIDGE_HTTP = BRIDGE_URL.replace(/^ws/, 'http');
+
+/** Ask the bridge to run a task for Claude in a session's project folder. */
+export async function sendCommand(
+  text: string,
+  sessionId: string,
+): Promise<{ ok: true; id: string } | { ok: false; status: number; message: string }> {
+  try {
+    const res = await fetch(`${BRIDGE_HTTP}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, sessionId }),
+    });
+    if (!res.ok) return { ok: false, status: res.status, message: await res.text() };
+    return { ok: true, id: ((await res.json()) as { id: string }).id };
+  } catch {
+    return { ok: false, status: 0, message: 'bridge unreachable' };
+  }
+}
 
 /** Answer a permission request held by the bridge. Resolves false if it already expired or failed. */
 export async function decideApproval(id: string, behavior: 'allow' | 'deny'): Promise<boolean> {
@@ -47,13 +65,16 @@ export function connectBridge(): () => void {
           reason: string;
           sessions: Session[];
           approvals?: Approval[];
-          voiceLab?: { voice: string; ready: boolean } | null;
+          commands?: DeskCommand[];
+          voiceLab?: { voice: string | null; ready: boolean; tts?: boolean; stt?: boolean } | null;
         };
         if (msg.type !== 'snapshot') return;
         const s = useStore.getState();
-        s.applySnapshot(msg.sessions, msg.reason, msg.approvals ?? []);
+        s.applySnapshot(msg.sessions, msg.reason, msg.approvals ?? [], msg.commands ?? []);
         // The bridge watches the local voice lab, so the page never probes it (and logs no refused connections).
-        s.setVoiceLab(msg.voiceLab?.ready ? msg.voiceLab.voice : null);
+        const lab = msg.voiceLab;
+        s.setVoiceLab(lab?.ready && lab.tts !== false ? (lab.voice ?? 'my voice') : null);
+        s.setStt(Boolean(lab?.stt));
       } catch {
         /* ignore malformed frames */
       }
@@ -61,6 +82,7 @@ export function connectBridge(): () => void {
     ws.onclose = () => {
       useStore.getState().setConnected(false);
       useStore.getState().setVoiceLab(null);
+      useStore.getState().setStt(false);
       schedule();
     };
     ws.onerror = () => ws?.close();

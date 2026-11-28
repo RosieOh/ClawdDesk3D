@@ -42,6 +42,17 @@ export interface Approval {
   expiresAt: number;
 }
 
+/** A task sent to Claude from the desk (spoken command), as the bridge reports it. */
+export interface DeskCommand {
+  id: string;
+  prompt: string;
+  project: string;
+  status: 'running' | 'done' | 'failed';
+  result: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
 export const COMBO_WINDOW_MS = 5 * 60 * 1000;
 const MAX_SIM_SATELLITES = 6;
 
@@ -90,6 +101,12 @@ interface StoreState extends Derived {
   override: { state: AgentState; tool: string | null } | null;
   /** permission requests waiting for Approve / Deny (live mode only) */
   approvals: Approval[];
+  /** tasks sent to Claude from the desk */
+  commands: DeskCommand[];
+  /** the voice lab can transcribe spoken commands */
+  sttAvailable: boolean;
+  /** spoken command in progress */
+  listening: 'idle' | 'listening' | 'thinking';
   /** session chosen in the HUD list; cleared automatically when that session disappears */
   pinnedId: string | null;
 
@@ -111,7 +128,7 @@ interface StoreState extends Derived {
   clapOn: boolean;
 
   setConnected: (c: boolean) => void;
-  applySnapshot: (sessions: Session[], reason: string, approvals?: Approval[]) => void;
+  applySnapshot: (sessions: Session[], reason: string, approvals?: Approval[], commands?: DeskCommand[]) => void;
   simulate: (state: AgentState, tool?: string | null) => void;
   addSatellite: () => void;
   clearSatellites: () => void;
@@ -124,6 +141,8 @@ interface StoreState extends Derived {
   setVoicePack: (name: string | null) => void;
   setVoiceLab: (name: string | null) => void;
   setClap: (on: boolean) => void;
+  setStt: (on: boolean) => void;
+  setListening: (l: 'idle' | 'listening' | 'thinking') => void;
 }
 
 // Voice preferences survive reloads (per browser). Storage can be unavailable; the defaults then apply.
@@ -236,6 +255,9 @@ export const useStore = create<StoreState>((set, get) => {
     override: null,
     pinnedId: null,
     approvals: [],
+    commands: [],
+    sttAvailable: false,
+    listening: 'idle',
     ...derive({ connected: false, live: [], simSats: [], override: null, pinnedId: null }),
 
     combo: 0,
@@ -256,8 +278,8 @@ export const useStore = create<StoreState>((set, get) => {
       commit({ connected, override: null, live: connected ? get().live : [], approvals: connected ? get().approvals : [] });
     },
 
-    applySnapshot: (sessions, reason, approvals = []) => {
-      commit({ live: sessions, approvals, ...(reason === 'hook' ? { override: null } : {}) });
+    applySnapshot: (sessions, reason, approvals = [], commands = []) => {
+      commit({ live: sessions, approvals, commands, ...(reason === 'hook' ? { override: null } : {}) });
     },
 
     simulate: (state, tool = null) => commit({ override: { state, tool: state === 'TOOL_RUNNING' ? tool : null } }),
@@ -305,6 +327,12 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     setVoicePack: (voicePack) => set({ voicePack }),
+    setStt: (sttAvailable) => {
+      if (sttAvailable !== get().sttAvailable) set({ sttAvailable });
+    },
+
+    setListening: (listening) => set({ listening }),
+
     setClap: (clapOn) => {
       writePref(PREF_CLAP, clapOn ? 'on' : 'off');
       set({ clapOn });

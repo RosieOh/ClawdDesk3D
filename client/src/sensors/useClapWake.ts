@@ -7,6 +7,7 @@ import { statusReport } from '../voice/announcer';
 import { sayLine } from '../voice/say';
 import { speech } from '../voice/speech';
 import { toggleVoice } from '../voice/controls';
+import { listenForCommand } from '../voice/assistant';
 import { ClapDetector } from './clap';
 
 // Runs on the audio thread: per ~5 ms frame, post the peak and RMS level.
@@ -35,6 +36,11 @@ export function onDoubleClap() {
   speech.pulse = 1; // the core flashes either way
   if (!s.voiceOn) {
     toggleVoice(); // wake: voice on + greeting
+    return;
+  }
+  // Awake: "Yes, sir?" and listen for a command (or just report status without speech recognition).
+  if (s.sttAvailable) {
+    void listenForCommand(true);
     return;
   }
   const text = statusReport(s.sessions, s.voiceLang);

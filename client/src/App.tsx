@@ -7,6 +7,7 @@ import { playTransition } from './audio';
 import { useJarvisVoice } from './voice/useJarvisVoice';
 import { toggleVoice } from './voice/controls';
 import { useClapWake } from './sensors/useClapWake';
+import { listenForCommand } from './voice/assistant';
 
 export default function App() {
   // Live hook bridge (falls back to simulator mode while disconnected)
@@ -33,6 +34,10 @@ export default function App() {
       if (k === 'm') useStore.getState().toggleMute();
       else if (k === 'v') toggleVoice();
       else if (k === 'c') useStore.getState().setClap(!useStore.getState().clapOn);
+      else if (e.code === 'Space' && !e.repeat && useStore.getState().sttAvailable) {
+        e.preventDefault();
+        void listenForCommand(false); // press again to stop early
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

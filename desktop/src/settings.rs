@@ -10,6 +10,9 @@ pub struct Settings {
     /// hold permission prompts so they can be answered from the menu bar (off: only a visible desk holds them)
     #[serde(default)]
     pub menubar_approvals: bool,
+    /// watch the camera (Apple Vision, on device) to know whether you're at the desk
+    #[serde(default)]
+    pub camera_presence: bool,
 }
 
 fn path(app: &AppHandle) -> Option<PathBuf> {

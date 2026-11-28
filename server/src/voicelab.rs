@@ -15,8 +15,14 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(800);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LabInfo {
-    pub voice: String,
+    /// cloned voice name; None when the lab runs without a reference recording (transcription only)
+    pub voice: Option<String>,
+    /// the voice model is loaded
     pub ready: bool,
+    /// can speak (has a reference recording)
+    pub tts: bool,
+    /// can transcribe spoken commands
+    pub stt: bool,
 }
 
 /// `host:port` of a plain `http://` URL on this machine; anything else is not probed.
@@ -37,13 +43,15 @@ pub fn parse_health(raw: &str) -> Option<LabInfo> {
     if v.get("ok").and_then(Value::as_bool) != Some(true) {
         return None;
     }
+    let voice = v.get("voice").and_then(Value::as_str).map(String::from);
     Some(LabInfo {
-        voice: v
-            .get("voice")
-            .and_then(Value::as_str)
-            .unwrap_or("my voice")
-            .to_string(),
+        tts: v
+            .get("tts")
+            .and_then(Value::as_bool)
+            .unwrap_or(voice.is_some()),
+        stt: v.get("stt").and_then(Value::as_bool).unwrap_or(false),
         ready: v.get("ready").and_then(Value::as_bool).unwrap_or(false),
+        voice,
     })
 }
 
@@ -88,10 +96,15 @@ mod tests {
         assert_eq!(
             parse_health(ok),
             Some(LabInfo {
-                voice: "my-voice".into(),
-                ready: true
+                voice: Some("my-voice".into()),
+                ready: true,
+                tts: true,
+                stt: false,
             })
         );
+        let stt_only = "HTTP/1.0 200 OK\r\n\r\n{\"ok\": true, \"voice\": null, \"ready\": false, \"tts\": false, \"stt\": true}";
+        let info = parse_health(stt_only).unwrap();
+        assert_eq!((info.voice, info.tts, info.stt), (None, false, true));
         assert!(parse_health("HTTP/1.0 503 Service Unavailable\r\n\r\n{\"ok\": true}").is_none());
         assert!(parse_health("HTTP/1.0 200 OK\r\n\r\n{\"ok\": false}").is_none());
         assert!(parse_health("garbage").is_none());

@@ -104,3 +104,102 @@ pub fn parse_tail(text: &str) -> TranscriptInfo {
     }
     info
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn newest_values_win_and_synthetic_models_are_skipped() {
+        let text = [
+            r#"{"type":"assistant","message":{"model":"claude-sonnet-4-5"},"gitBranch":"old","version":"2.0.0"}"#,
+            r#"{"type":"user","permissionMode":"plan","gitBranch":"main","version":"2.1.0"}"#,
+            r#"{"type":"assistant","message":{"model":"claude-opus-5-5"}}"#,
+            r#"{"type":"assistant","message":{"model":"<synthetic>"}}"#,
+            r#"not json"#,
+        ]
+        .join("\n");
+        let info = parse_tail(&text);
+        assert_eq!(info.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(info.git_branch.as_deref(), Some("main"));
+        assert_eq!(info.version.as_deref(), Some("2.1.0"));
+        assert_eq!(info.permission_mode.as_deref(), Some("plan"));
+    }
+
+    #[test]
+    fn empty_or_garbage_gives_nothing() {
+        assert!(parse_tail("").is_empty());
+        assert!(parse_tail("{}\n[1,2]\n").is_empty());
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("clawddesk-test-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn reads_only_the_tail_and_drops_the_partial_first_line() {
+        let dir = temp_dir("tail");
+        let path = dir.join("s.jsonl");
+        let mut f = File::create(&path).unwrap();
+        // An old model far before the tail window, then padding, then the current model.
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"model":"claude-old"}}}}"#
+        )
+        .unwrap();
+        let pad = format!(r#"{{"type":"user","pad":"{}"}}"#, "x".repeat(1000));
+        for _ in 0..(TAIL_BYTES / 1000 + 10) {
+            writeln!(f, "{pad}").unwrap();
+        }
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"model":"claude-new"}},"gitBranch":"feat/x"}}"#
+        )
+        .unwrap();
+        drop(f);
+        let info = read_tail(&path).unwrap();
+        assert_eq!(info.model.as_deref(), Some("claude-new"));
+        assert_eq!(info.git_branch.as_deref(), Some("feat/x"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_jsonl_files_inside_the_root_are_allowed() {
+        let root = temp_dir("root");
+        let outside = temp_dir("outside");
+        std::fs::create_dir_all(root.join("projects/p")).unwrap();
+        let inside = root.join("projects/p/s.jsonl");
+        std::fs::write(&inside, "").unwrap();
+        std::fs::write(root.join("settings.json"), "{}").unwrap();
+        std::fs::write(outside.join("s.jsonl"), "").unwrap();
+
+        assert!(allowed_path(inside.to_str().unwrap(), &root).is_some());
+        assert!(
+            allowed_path(root.join("settings.json").to_str().unwrap(), &root).is_none(),
+            "not .jsonl"
+        );
+        assert!(
+            allowed_path(outside.join("s.jsonl").to_str().unwrap(), &root).is_none(),
+            "outside root"
+        );
+        let sneaky = root
+            .join("projects/../../")
+            .join(outside.file_name().unwrap())
+            .join("s.jsonl");
+        assert!(
+            allowed_path(sneaky.to_str().unwrap(), &root).is_none(),
+            "`..` escape"
+        );
+        assert!(
+            allowed_path(root.join("missing.jsonl").to_str().unwrap(), &root).is_none(),
+            "missing file"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+}

@@ -889,6 +889,72 @@ mod tests {
     }
 
     #[test]
+    fn session_details_come_from_the_payload() {
+        let mut h = Harness::new();
+        let s = h.fire(
+            "SessionStart",
+            json!({ "source": "resume", "model": "claude-opus-5-5", "permission_mode": "plan" }),
+        );
+        assert_eq!(s.start_source.as_deref(), Some("resume"));
+        assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(s.permission_mode.as_deref(), Some("plan"));
+
+        let s = h.fire(
+            "UserPromptSubmit",
+            json!({ "permission_mode": "acceptEdits" }),
+        );
+        assert_eq!(s.permission_mode.as_deref(), Some("acceptEdits"));
+        assert_eq!(
+            s.model.as_deref(),
+            Some("claude-opus-5-5"),
+            "kept when absent"
+        );
+
+        let s = h.fire("SessionStart", json!({ "source": "compact" }));
+        assert_eq!(
+            s.start_source.as_deref(),
+            Some("resume"),
+            "compaction restart keeps how it began"
+        );
+
+        let s = h.fire(
+            "Stop",
+            json!({ "model": { "id": "claude-sonnet-5-5", "display_name": "Sonnet 5.5" } }),
+        );
+        assert_eq!(s.model.as_deref(), Some("claude-sonnet-5-5"));
+    }
+
+    #[test]
+    fn transcript_fills_gaps_without_overriding_newer_payload_values() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({ "permission_mode": "auto" }));
+        let changed = h.store.merge_transcript(
+            SID,
+            TranscriptInfo {
+                model: Some("claude-opus-5-5".into()),
+                git_branch: Some("main".into()),
+                version: Some("2.1.332".into()),
+                permission_mode: Some("default".into()),
+            },
+        );
+        assert!(changed);
+        let s = h.store.get(SID).unwrap();
+        assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(s.git_branch.as_deref(), Some("main"));
+        assert_eq!(s.claude_version.as_deref(), Some("2.1.332"));
+        assert_eq!(
+            s.permission_mode.as_deref(),
+            Some("auto"),
+            "payload value is newer"
+        );
+        assert!(
+            !h.store.merge_transcript(SID, TranscriptInfo::default()),
+            "nothing new"
+        );
+        assert!(!h.store.merge_transcript("nope", TranscriptInfo::default()));
+    }
+
+    #[test]
     fn helpers() {
         assert_eq!(project_from_cwd("C:\\code\\proj\\"), "proj");
         assert_eq!(project_from_cwd(""), "unknown");

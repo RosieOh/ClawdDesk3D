@@ -3,7 +3,7 @@
 A live 3D desk diorama that reacts to what Claude Code (CLI and VS Code) is doing, driven by Claude Code hooks.
 
 ```
-Claude Code ──hooks (HTTP POST)──▶ server :3001 ──WebSocket──▶ client :5173 (R3F scene + HUD)
+Claude Code ──hooks (HTTP POST)──▶ bridge :3001 (Rust, axum) ──WebSocket──▶ client :5173 (R3F scene + HUD)
 ```
 
 | State | Trigger | Visual |
@@ -16,14 +16,18 @@ Claude Code ──hooks (HTTP POST)──▶ server :3001 ──WebSocket──�
 
 ## Run
 
+Requires Node.js and a Rust toolchain ([rustup](https://rustup.rs)).
+
 ```bash
-npm install        # once — installs server + client (npm workspaces)
-npm run dev        # starts bridge (:3001) and client (:5173) together
+npm install        # once — installs the client
+npm run dev        # builds + starts the bridge (:3001, cargo run) and the client (:5173) together
 ```
+
+The first `npm run dev` compiles the bridge (a few tens of seconds); after that it starts instantly. For an always-on bridge, build it once with `npm run build` and run `server/target/release/clawddesk-bridge` (≈3 MB binary, ≈15 MB RAM).
 
 Open http://localhost:5173. With no bridge it runs in **SIMULATOR MODE**; the dock (keys `1`–`7`, `0` clears satellites, `M` toggles sound) works either way.
 
-Smoke-test the bridge without Claude: `npm run test:hooks`. Unit tests (bridge state machine + origin policy) and the client typecheck: `npm test`.
+Smoke-test the bridge without Claude: `npm run test:hooks`. Unit tests (bridge state machine + origin policy, `cargo test`) and the client typecheck: `npm test`.
 
 ## Wire up Claude Code
 
@@ -76,9 +80,8 @@ CLAWDDESK_PORT=3101 VITE_BRIDGE_URL=ws://127.0.0.1:3101 npm run dev
 ## Layout
 
 ```
-server/index.js          Express + ws bridge (HTTP, WebSocket, origin guard)
-server/core.js           pure session state machine + origin policy
-server/core.test.js      node:test unit tests
+server/src/main.rs       axum bridge: hook routes, WebSocket, origin guard, sweeper
+server/src/core.rs       pure session state machine + origin policy (+ unit tests)
 client/src/store.ts      Zustand: sessions, derived view, sim override, combo/focus stats
 client/src/bridge.ts     WebSocket client with backoff reconnect
 client/src/audio.ts      Web Audio clicks + generating hum

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentState, Session } from '../store';
-import { Announcer, phrase, type Announcement } from './announcer';
+import { Announcer, phrase, statusReport, type Announcement } from './announcer';
 import { pickVoice } from './speech';
 import { effectiveSessions } from './useJarvisVoice';
 
@@ -151,5 +151,23 @@ describe('effectiveSessions', () => {
       ['other', 'GENERATING', null],
     ]);
     expect(effectiveSessions({ sessions, primaryId: 'main', override: null, state: 'IDLE', tool: null, running: 0 })).toBe(sessions);
+  });
+});
+
+describe('statusReport', () => {
+  it('reports nothing running', () => {
+    expect(statusReport([s('old', 'OFFLINE')], 'en')).toBe('All quiet, sir. No sessions are running.');
+    expect(statusReport([], 'ko')).toBe('지금 실행 중인 세션이 없습니다.');
+  });
+
+  it('names who is waiting and who is working', () => {
+    const list = [s('web-app', 'WAITING'), s('api', 'GENERATING'), s('infra', 'TOOL_RUNNING'), s('docs', 'IDLE')];
+    expect(statusReport(list, 'en')).toBe('Sir, 4 sessions are online. web-app is waiting for your approval. api and infra are working.');
+    expect(statusReport(list, 'ko')).toBe('세션 4개가 연결되어 있습니다. web-app에서 승인을 기다리고 있습니다. api, infra 작업 중입니다.');
+  });
+
+  it('everyone idle', () => {
+    expect(statusReport([s('a', 'IDLE')], 'en')).toBe('Sir, 1 session is online. It is standing by.');
+    expect(statusReport([s('a', 'IDLE'), s('b', 'IDLE')], 'en')).toBe('Sir, 2 sessions are online. All are standing by.');
   });
 });

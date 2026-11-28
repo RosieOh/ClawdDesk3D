@@ -9,6 +9,7 @@ import { DEFAULT_RECORD, recordCommand } from './record';
 import { sayLine } from './say';
 import { speech } from './speech';
 import { toggleVoice } from './controls';
+import { maybeBrief } from './briefing';
 
 const LINES = {
   greet: { en: 'Yes, sir?', ko: '네, 말씀하세요.' },
@@ -100,6 +101,8 @@ async function act(text: string, lang: Lang) {
       return;
     case 'status':
       return tell(statusReport(s.sessions, lang), lang);
+    case 'briefing':
+      return maybeBrief(true);
     case 'claude': {
       if (!s.connected) return tell(said('noBridge', lang), lang);
       const target = s.primary && s.primary.cwd && s.connected ? s.primary : null;

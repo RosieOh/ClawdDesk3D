@@ -1,4 +1,4 @@
-import { useStore, type Approval, type DeskCommand, type Session } from './store';
+import { useStore, type Alert, type Approval, type DeskCommand, type GitHubOverview, type Session } from './store';
 
 const BRIDGE_URL: string =
   (import.meta.env.VITE_BRIDGE_URL as string | undefined) ?? 'ws://127.0.0.1:3001';
@@ -68,6 +68,8 @@ export function connectBridge(): () => void {
           commands?: DeskCommand[];
           voiceLab?: { voice: string | null; ready: boolean; tts?: boolean; stt?: boolean } | null;
           user?: { present: boolean; since: number } | null;
+          alerts?: Alert[];
+          github?: GitHubOverview | null;
         };
         if (msg.type !== 'snapshot') return;
         const s = useStore.getState();
@@ -77,6 +79,7 @@ export function connectBridge(): () => void {
         s.setVoiceLab(lab?.ready && lab.tts !== false ? (lab.voice ?? 'my voice') : null);
         s.setStt(Boolean(lab?.stt));
         s.setUserPresent(msg.user ? msg.user.present : null);
+        if (msg.alerts !== undefined || msg.github !== undefined) s.setGitHub(msg.alerts ?? [], msg.github ?? null);
       } catch {
         /* ignore malformed frames */
       }

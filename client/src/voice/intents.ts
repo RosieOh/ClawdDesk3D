@@ -8,6 +8,7 @@ export type Intent =
   | { kind: 'status' }
   | { kind: 'mute' }
   | { kind: 'cancel' }
+  | { kind: 'briefing' }
   | { kind: 'claude'; prompt: string };
 
 /** "Jarvis, …", "Hey Jarvis …", "자비스, …" are just how you address it. */
@@ -19,6 +20,7 @@ const STATUS = [
   /^(?:상태|상태 (?:알려 ?줘|보고|어때)|지금 (?:상황|상태)(?:은| 어때| 알려 ?줘)?|보고해 ?줘?)[?.]?$/,
 ];
 const MUTE = [/^(?:be quiet|quiet|mute|silence|stop talking|shut up)[.!]?$/i, /^(?:조용히(?: 해 ?줘?)?|음소거|그만 말해)[.!]?$/];
+const BRIEFING = [/^(?:briefing|brief me|morning briefing|what(?:'s| is) new|catch me up)[?.!]?$/i, /^(?:브리핑(?: 해 ?줘?)?|새 소식|오늘 (?:뭐 있어|할 일))[?.!]?$/];
 const CANCEL = [/^(?:never ?mind|cancel|forget it|nothing)[.!]?$/i, /^(?:취소|아니야|됐어|아무것도 아니야)[.!]?$/];
 
 export function stripWake(text: string): string {
@@ -32,6 +34,7 @@ export function parseIntent(raw: string): Intent {
   if (STATUS.some((r) => r.test(plain))) return { kind: 'status' };
   if (MUTE.some((r) => r.test(plain))) return { kind: 'mute' };
   if (CANCEL.some((r) => r.test(plain))) return { kind: 'cancel' };
+  if (BRIEFING.some((r) => r.test(plain))) return { kind: 'briefing' };
   // Whisper sometimes hears room noise as a word or two of filler; don't send that to Claude.
   if (plain.length < 4 || /^(?:thank you|thanks|you|uh|um|음|어)$/i.test(plain)) return { kind: 'none' };
   return { kind: 'claude', prompt: text };

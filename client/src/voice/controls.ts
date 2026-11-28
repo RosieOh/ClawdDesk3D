@@ -5,6 +5,7 @@ import type { Lang } from './announcer';
 import { engines, sayLine } from './say';
 import { hush, unlockSpeech } from './speech';
 import { stopClips, unlockClips } from './voicepack';
+import { maybeBrief } from './briefing';
 
 const GREETING: Record<Lang, string> = { ko: '음성 안내를 시작합니다.', en: 'At your service, sir.' };
 
@@ -17,6 +18,7 @@ export function toggleVoice() {
     unlockClips();
     sayLine('greeting', GREETING[s.voiceLang], s.voiceLang);
     s.setCaption(GREETING[s.voiceLang]);
+    maybeBrief(); // first wake of the day: the briefing follows the greeting
   } else {
     hush();
     stopClips();

@@ -59,6 +59,27 @@ export interface DeskCommand {
   finishedAt: number | null;
 }
 
+/** Something on GitHub that just happened (via the bridge's `gh` watcher). */
+export interface GitHubFinding {
+  kind: 'ci_failed' | 'review_requested';
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+}
+export interface Alert extends GitHubFinding {
+  id: string;
+  at: number;
+}
+/** GitHub state for the briefing. */
+export interface GitHubOverview {
+  repos: string[];
+  openPrs: number;
+  ciFailing: GitHubFinding[];
+  reviewRequested: GitHubFinding[];
+  checkedAt: number;
+}
+
 export const COMBO_WINDOW_MS = 5 * 60 * 1000;
 const MAX_SIM_SATELLITES = 6;
 
@@ -115,6 +136,9 @@ interface StoreState extends Derived {
   listening: 'idle' | 'listening' | 'thinking';
   /** at the desk? (camera presence via the menu bar app; null = unknown / not watching) */
   userPresent: boolean | null;
+  /** recent GitHub alerts, newest first */
+  alerts: Alert[];
+  github: GitHubOverview | null;
   /** session chosen in the HUD list; cleared automatically when that session disappears */
   pinnedId: string | null;
 
@@ -151,6 +175,7 @@ interface StoreState extends Derived {
   setClap: (on: boolean) => void;
   setStt: (on: boolean) => void;
   setUserPresent: (present: boolean | null) => void;
+  setGitHub: (alerts: Alert[], github: GitHubOverview | null) => void;
   setListening: (l: 'idle' | 'listening' | 'thinking') => void;
 }
 
@@ -268,6 +293,8 @@ export const useStore = create<StoreState>((set, get) => {
     sttAvailable: false,
     listening: 'idle',
     userPresent: null,
+    alerts: [],
+    github: null,
     ...derive({ connected: false, live: [], simSats: [], override: null, pinnedId: null }),
 
     combo: 0,
@@ -342,6 +369,8 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     setListening: (listening) => set({ listening }),
+
+    setGitHub: (alerts, github) => set({ alerts, github }),
 
     setUserPresent: (userPresent) => {
       if (userPresent !== get().userPresent) set({ userPresent });

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { setAudioEnabled } from './audio';
+import type { Lang } from './voice/announcer';
 
 export type AgentState = 'OFFLINE' | 'IDLE' | 'WAITING' | 'GENERATING' | 'TOOL_RUNNING';
 
@@ -13,6 +14,8 @@ export interface Session {
   /** tools currently in flight (parallel tool calls) */
   running?: number;
   lastTool?: string | null;
+  /** last hook event name, e.g. `Stop` or `StopFailure` */
+  lastEvent?: string;
   prompts?: number;
   startedAt: number;
   lastSeen: number;
@@ -81,6 +84,11 @@ interface StoreState extends Derived {
   focusAccum: number;
   focusSince: number | null;
   muted: boolean;
+  /** spoken announcements (JARVIS voice) */
+  voiceOn: boolean;
+  voiceLang: Lang;
+  /** latest announcement, shown as a subtitle whether or not the voice is on */
+  caption: { id: number; text: string } | null;
 
   setConnected: (c: boolean) => void;
   applySnapshot: (sessions: Session[], reason: string) => void;
@@ -90,7 +98,33 @@ interface StoreState extends Derived {
   /** show this session on the desk (null: follow the most recently active one again) */
   pin: (id: string | null) => void;
   toggleMute: () => void;
+  setVoice: (on: boolean) => void;
+  setVoiceLang: (lang: Lang) => void;
+  setCaption: (text: string) => void;
 }
+
+// Voice preferences survive reloads (per browser). Storage can be unavailable; the defaults then apply.
+const PREF_VOICE = 'clawddesk.voice';
+const PREF_LANG = 'clawddesk.voiceLang';
+function readPref(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writePref(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* private mode / blocked storage: keep it in memory only */
+  }
+}
+/** English (the JARVIS voice) unless the viewer picked Korean before. */
+const defaultLang = (): Lang => {
+  const saved = typeof window === 'undefined' ? null : readPref(PREF_LANG);
+  return saved === 'ko' ? 'ko' : 'en';
+};
 
 const isActive = (s: AgentState) => s === 'GENERATING' || s === 'TOOL_RUNNING';
 const isResting = (s: AgentState) => s === 'IDLE' || s === 'OFFLINE';
@@ -184,6 +218,9 @@ export const useStore = create<StoreState>((set, get) => {
     focusAccum: 0,
     focusSince: null,
     muted: true,
+    voiceOn: typeof window !== 'undefined' && readPref(PREF_VOICE) === 'on',
+    voiceLang: defaultLang(),
+    caption: null,
 
     setConnected: (connected) => {
       if (connected === get().connected) return;
@@ -228,6 +265,18 @@ export const useStore = create<StoreState>((set, get) => {
       setAudioEnabled(!muted);
       set({ muted });
     },
+
+    setVoice: (voiceOn) => {
+      writePref(PREF_VOICE, voiceOn ? 'on' : 'off');
+      set({ voiceOn });
+    },
+
+    setVoiceLang: (voiceLang) => {
+      writePref(PREF_LANG, voiceLang);
+      set({ voiceLang });
+    },
+
+    setCaption: (text) => set({ caption: { id: (get().caption?.id ?? 0) + 1, text } }),
   };
 });
 

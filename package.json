@@ -11,7 +11,7 @@
     "dev:bridge": "node scripts/dev-bridge.mjs",
     "start": "npm run dev",
     "build": "cargo build --release --manifest-path server/Cargo.toml && npm run build -w client",
-    "test": "cargo test --manifest-path server/Cargo.toml && node --test scripts/ && npm run typecheck -w client && npm test -w client",
+    "test": "cargo test --manifest-path server/Cargo.toml && node --test scripts/*.test.mjs && npm run typecheck -w client && npm test -w client",
     "test:hooks": "bash scripts/test-hooks.sh",
     "hooks:install": "node scripts/hooks.mjs install",
     "hooks:uninstall": "node scripts/hooks.mjs uninstall",

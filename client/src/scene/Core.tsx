@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mix } from './mix';
 import { MAT, PALETTE } from './materials';
 import { CORE_POS } from './layout';
+import { speech } from '../voice/speech';
 
 const REST_Y = 0.62; // resting on the dock
 const HOVER_Y = 1.85;
@@ -23,10 +24,15 @@ export function Core() {
   const light = useRef<THREE.PointLight>(null!);
   const dockMat = useRef<THREE.MeshStandardMaterial>(null!);
   const spin = useRef({ a: 0, b: 0, c: 0, inner: 0 });
+  const spoken = useRef(0);
 
   useFrame((st, dt) => {
     const t = st.clock.elapsedTime;
     const { offline, idle, gen, tool, wait } = mix;
+    // Speaking: a soft glow while talking plus a flash on every word, decaying quickly.
+    const say = (spoken.current = THREE.MathUtils.damp(spoken.current, speech.speaking, 8, dt));
+    speech.pulse = Math.max(0, speech.pulse - dt * 4);
+    const voiceGlow = say * (1.2 + 3 * speech.pulse);
     // Attention blink while waiting for permission: sharp on/off at ~1.25 Hz
     const blink = wait * (Math.sin(t * 7.85) > 0 ? 1 : 0);
     const awake = 1 - offline;
@@ -45,12 +51,12 @@ export function Core() {
 
     innerMat.current.emissive.copy(mix.color);
     innerMat.current.emissiveIntensity =
-      0.25 * offline + (1.6 + 0.5 * Math.sin(t * 2.1)) * idle + (5 + Math.sin(t * 23) * 1.2) * gen + (3.2 + Math.sin(t * 8) * 0.6) * tool;
+      0.25 * offline + (1.6 + 0.5 * Math.sin(t * 2.1)) * idle + (5 + Math.sin(t * 23) * 1.2) * gen + (3.2 + Math.sin(t * 8) * 0.6) * tool + 1.5 * voiceGlow;
 
     // Visor: soft pulse
     visorMat.current.emissive.copy(mix.color);
     visorMat.current.emissiveIntensity =
-      0.1 * offline + (1.2 + Math.sin(t * 2.2) * 0.9) * idle * (1 - wait) + 3.5 * gen + (2 + Math.sin(t * 10) * 1.2) * tool + 5 * blink;
+      0.1 * offline + (1.2 + Math.sin(t * 2.2) * 0.9) * idle * (1 - wait) + 3.5 * gen + (2 + Math.sin(t * 10) * 1.2) * tool + 5 * blink + 2.5 * voiceGlow;
     visor.current.rotation.z = Math.sin(t * 0.7) * 0.08 * awake;
 
     // Gyroscope: counter-rotating rings (static when offline)
@@ -67,7 +73,7 @@ export function Core() {
     glowRingMat.current.emissiveIntensity = 0.15 * offline + 1.5 * idle + 4 * gen + 2.5 * tool;
 
     light.current.color.copy(mix.color);
-    light.current.intensity = 0.4 * offline + 7 * idle + (18 + Math.sin(t * 20) * 3) * gen + 11 * tool + 6 * blink;
+    light.current.intensity = 0.4 * offline + 7 * idle + (18 + Math.sin(t * 20) * 3) * gen + 11 * tool + 6 * blink + 5 * voiceGlow;
 
     // Dock "charging" glow is strongest while asleep
     dockMat.current.emissive.copy(mix.color);

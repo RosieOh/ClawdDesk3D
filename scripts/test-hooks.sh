@@ -3,9 +3,11 @@
 #   npm run test:hooks [-- <session-id> <cwd>]      FAST=1 skips the pauses
 set -euo pipefail
 URL="${BRIDGE_URL:-http://127.0.0.1:3001}"
-SID="${1:-demo-$(date +%s)}"
+# Session ids look like Claude Code's (UUIDs), so the HUD's 8-character short ids stay distinct.
+new_id() { uuidgen 2>/dev/null | tr 'A-Z' 'a-z' || printf 'demo%04x-%04x-4000-8000-%012x\n' $RANDOM $RANDOM "$(date +%s)"; }
+SID="${1:-$(new_id)}"
 CWD="${2:-$HOME/dev/my-app}"
-SID2="${SID}-side"
+SID2="$(new_id)"
 CWD2="$(dirname "$CWD")/side-project"
 
 pause() { [ -n "${FAST:-}" ] || sleep "$1"; }
@@ -23,7 +25,7 @@ if ! curl -s -m 2 -o /dev/null "$URL/"; then
 fi
 
 echo "# basic turn"
-post "$SID" SessionStart ''; pause 2
+post "$SID" SessionStart ',"source":"startup","model":"claude-opus-5-5","permission_mode":"default"'; pause 2
 post "$SID" UserPromptSubmit ',"prompt":"refactor the api"'; pause 3
 
 echo "# parallel tools: stays TOOL_RUNNING until both finish"
@@ -38,6 +40,7 @@ post "$SID" PermissionRequest ',"tool_name":"Bash"'; pause 3
 post "$SID" PostToolUse ',"tool_name":"Bash","tool_use_id":"t3"'; pause 2
 
 echo "# second session shows up as a satellite drone"
+post "$SID2" SessionStart ',"source":"resume","model":"claude-sonnet-5-5","permission_mode":"plan"'
 post "$SID2" UserPromptSubmit ''; pause 1
 post "$SID" PreToolUse ',"tool_name":"Edit","tool_use_id":"t4"'; pause 3
 post "$SID" PostToolUse ',"tool_name":"Edit","tool_use_id":"t4"'; pause 1

@@ -62,9 +62,12 @@ LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 WARMUP = ["At your service, sir.", "Task complete, sir.", "Sir, your attention is required."]
 
 
+DESKTOP_APP_ORIGINS = {"tauri://localhost", "http://tauri.localhost"}
+
+
 def origin_allowed(origin: str | None) -> bool:
-    """No Origin (curl, scripts) or a loopback page. Anything else is a foreign website."""
-    if not origin:
+    """No Origin (curl, scripts), a loopback page or the desktop app. Anything else is a foreign website."""
+    if not origin or origin in DESKTOP_APP_ORIGINS:
         return True
     try:
         u = urlparse(origin)

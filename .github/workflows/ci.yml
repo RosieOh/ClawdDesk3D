@@ -48,3 +48,27 @@ jobs:
       - run: bash -n scripts/test-hooks.sh
       - run: bash -n voice-lab/setup.sh
       - run: python3 -m py_compile voice-lab/server.py voice-lab/record.py
+
+  desktop:
+    name: Desktop app (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w client # the app embeds client/dist
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - run: cargo fmt --check
+        working-directory: desktop
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: desktop
+      - run: cargo test
+        working-directory: desktop

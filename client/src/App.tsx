@@ -6,6 +6,7 @@ import { useStore } from './store';
 import { playTransition } from './audio';
 import { useJarvisVoice } from './voice/useJarvisVoice';
 import { toggleVoice } from './voice/controls';
+import { useClapWake } from './sensors/useClapWake';
 
 export default function App() {
   // Live hook bridge (falls back to simulator mode while disconnected)
@@ -20,8 +21,9 @@ export default function App() {
     [],
   );
 
-  // Spoken announcements + captions
+  // Spoken announcements + captions; double clap to wake / ask for status
   useJarvisVoice();
+  useClapWake();
 
   // M toggles sound effects, V toggles the voice
   useEffect(() => {
@@ -30,6 +32,7 @@ export default function App() {
       const k = e.key.toLowerCase();
       if (k === 'm') useStore.getState().toggleMute();
       else if (k === 'v') toggleVoice();
+      else if (k === 'c') useStore.getState().setClap(!useStore.getState().clapOn);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

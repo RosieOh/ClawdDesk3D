@@ -91,6 +91,10 @@ interface StoreState extends Derived {
   caption: { id: number; text: string } | null;
   /** name of the local voice pack, when one is installed */
   voicePack: string | null;
+  /** voice-lab voice name, while the local voice lab is running */
+  voiceLab: string | null;
+  /** listen to the microphone for a double clap */
+  clapOn: boolean;
 
   setConnected: (c: boolean) => void;
   applySnapshot: (sessions: Session[], reason: string) => void;
@@ -104,11 +108,14 @@ interface StoreState extends Derived {
   setVoiceLang: (lang: Lang) => void;
   setCaption: (text: string) => void;
   setVoicePack: (name: string | null) => void;
+  setVoiceLab: (name: string | null) => void;
+  setClap: (on: boolean) => void;
 }
 
 // Voice preferences survive reloads (per browser). Storage can be unavailable; the defaults then apply.
 const PREF_VOICE = 'clawddesk.voice';
 const PREF_LANG = 'clawddesk.voiceLang';
+const PREF_CLAP = 'clawddesk.clap';
 function readPref(key: string): string | null {
   try {
     return window.localStorage.getItem(key);
@@ -225,6 +232,8 @@ export const useStore = create<StoreState>((set, get) => {
     voiceLang: defaultLang(),
     caption: null,
     voicePack: null,
+    voiceLab: null,
+    clapOn: typeof window !== 'undefined' && readPref(PREF_CLAP) === 'on',
 
     setConnected: (connected) => {
       if (connected === get().connected) return;
@@ -281,6 +290,14 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     setVoicePack: (voicePack) => set({ voicePack }),
+    setClap: (clapOn) => {
+      writePref(PREF_CLAP, clapOn ? 'on' : 'off');
+      set({ clapOn });
+    },
+
+    setVoiceLab: (voiceLab) => {
+      if (voiceLab !== get().voiceLab) set({ voiceLab });
+    },
 
     setCaption: (text) => set({ caption: { id: (get().caption?.id ?? 0) + 1, text } }),
   };

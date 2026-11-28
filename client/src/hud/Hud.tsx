@@ -221,7 +221,12 @@ function StatsPanel() {
   const voiceOn = useStore((s) => s.voiceOn);
   const voiceLang = useStore((s) => s.voiceLang);
   const voicePack = useStore((s) => s.voicePack);
+  const voiceLab = useStore((s) => s.voiceLab);
+  const clapOn = useStore((s) => s.clapOn);
+  const setClap = useStore((s) => s.setClap);
   const canSpeak = speechSupported();
+  const canListen = typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
+  const engineName = voicePack ?? (voiceLab && voiceLang === 'en' ? 'my voice' : null);
 
   const focus = focusAccum + (focusSince ? now - focusSince : 0);
   const comboLive = lastPromptAt > 0 && now - lastPromptAt < COMBO_WINDOW_MS ? combo : 0;
@@ -249,11 +254,29 @@ function StatsPanel() {
                 className={`rounded-lg border px-2 py-1 font-mono text-[10px] tracking-wider ${
                   voiceOn ? 'border-sky-300/40 bg-sky-300/15 text-sky-200' : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
                 }`}
-                title={voicePack ? `Spoken announcements (V) · voice pack: ${voicePack}` : 'Spoken announcements (V)'}
+                title={
+                  voicePack
+                    ? `Spoken announcements (V) · voice pack: ${voicePack}`
+                    : voiceLab
+                      ? `Spoken announcements (V) · voice lab: ${voiceLab} (English)`
+                      : 'Spoken announcements (V)'
+                }
                 data-testid="voice-toggle"
               >
-                {voiceOn ? '🗣' : '🤐'} {voicePack ? voicePack.toUpperCase() : 'VOICE'}
+                {voiceOn ? '🗣' : '🤐'} {engineName ? engineName.toUpperCase() : 'VOICE'}
               </button>
+              {canListen && (
+                <button
+                  onClick={() => setClap(!clapOn)}
+                  className={`rounded-lg border px-2 py-1 font-mono text-[10px] tracking-wider ${
+                    clapOn ? 'border-amber-300/40 bg-amber-300/15 text-amber-200' : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
+                  }`}
+                  title="Double clap: wake JARVIS, or ask for a status report when awake (C). Uses the microphone; audio stays in the browser."
+                  data-testid="clap-toggle"
+                >
+                  {clapOn ? '👏 ON' : '👏 OFF'}
+                </button>
+              )}
               <button
                 onClick={cycleVoiceLang}
                 className="rounded-lg border border-white/15 bg-white/5 px-1.5 py-1 font-mono text-[10px] tracking-wider text-white/70 hover:bg-white/10"
@@ -437,7 +460,7 @@ export function Hud() {
       </div>
       <div className="flex flex-col items-center gap-2">
         <Caption />
-        <div className="hidden font-mono text-[10px] tracking-widest text-white/30 sm:block">DRAG TO ORBIT · SCROLL TO ZOOM · 1–7 TO PLAY · M SOUND · V VOICE</div>
+        <div className="hidden font-mono text-[10px] tracking-widest text-white/30 sm:block">DRAG TO ORBIT · SCROLL TO ZOOM · 1–7 TO PLAY · M SOUND · V VOICE · C CLAP</div>
         <Dock />
       </div>
     </div>

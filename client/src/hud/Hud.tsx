@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { COMBO_WINDOW_MS, MAX_SIM_SATELLITES, useStore, type AgentState, type Approval, type Session } from '../store';
 import { decideApproval } from '../bridge';
-import { branchLabel, permissionMode, prettyModel, shortId, sourceLabel, startLabel } from '../format';
+import { branchLabel, permissionMode, prettyModel, shortId, sourceLabel, startLabel, tokenLine } from '../format';
 import { STATE_HEX, stateHex } from '../scene/mix';
 import { playUiClick } from '../audio';
 import { cycleVoiceLang, toggleVoice } from '../voice/controls';
@@ -94,7 +94,7 @@ function SessionInfo({ session, pinned }: { session: Session; pinned: boolean })
           </>
         )}
       </div>
-      {(mode || branch || start || session.claudeVersion) && (
+      {(mode || branch || start || session.claudeVersion || session.usage || (session.subagents ?? 0) > 0) && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {mode && (
             <Chip color={mode.color} title={`permission mode: ${session.permissionMode}`}>
@@ -104,6 +104,10 @@ function SessionInfo({ session, pinned }: { session: Session; pinned: boolean })
           {branch && <Chip title="git branch">⎇ {branch}</Chip>}
           {start && <Chip title="how the session began">{start}</Chip>}
           {session.claudeVersion && <Chip title="Claude Code version">v{session.claudeVersion}</Chip>}
+          {tokenLine(session.usage) && (
+            <Chip title="tokens this session: ↑ input (incl. cache writes), ↓ output, cache reads">{tokenLine(session.usage)}</Chip>
+          )}
+          {(session.subagents ?? 0) > 0 && <Chip title="subagents running">⧉ {session.subagents} agents</Chip>}
         </div>
       )}
     </div>
@@ -166,6 +170,15 @@ function StatusPanel() {
           </div>
         </div>
       </div>
+      {tool && primary?.toolDetail && (
+        <code
+          className="mt-1.5 block truncate rounded-md bg-black/25 px-2 py-1 font-mono text-[11px] text-white/75"
+          title={primary.toolDetail}
+          data-testid="tool-detail"
+        >
+          {primary.toolDetail}
+        </code>
+      )}
     </div>
   );
 }

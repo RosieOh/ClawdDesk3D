@@ -28,6 +28,12 @@ export interface Session {
   claudeVersion?: string | null;
   /** `startup` | `resume` | `clear` */
   startSource?: string | null;
+  /** what the shown tool is doing (command, file, URL; secrets masked by the bridge) */
+  toolDetail?: string | null;
+  /** subagents running right now */
+  subagents?: number;
+  /** token totals from the transcript */
+  usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
 }
 
 /** A permission request the bridge is holding for an answer from the desk. */

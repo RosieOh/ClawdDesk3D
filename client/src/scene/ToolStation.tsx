@@ -16,6 +16,8 @@ export function ToolStation() {
   const lastTool = useRef('Tool');
   if (tool) lastTool.current = tool;
   const label = tool ?? lastTool.current;
+  const detail = useStore((s) => (s.tool ? s.primary?.toolDetail ?? null : null));
+  const detailShort = detail && detail.length > 44 ? `${detail.slice(0, 43)}…` : detail;
   const beamHex = toolHex(label);
 
   const cube = useRef<THREE.Group>(null!);
@@ -121,6 +123,22 @@ export function ToolStation() {
           <Text font={FONT.sans} position={[0.04, -0.005, 0.03]} fontSize={0.15} letterSpacing={0.02} anchorX="center" anchorY="middle" color={beamHex}>
             {label}
           </Text>
+          {detailShort && (
+            <Text
+              font={FONT.mono}
+              position={[0, -0.27, 0.03]}
+              fontSize={0.075}
+              anchorX="center"
+              anchorY="top"
+              color="#ffffff"
+              fillOpacity={0.8}
+              outlineWidth={0.005}
+              outlineColor="#000000"
+              maxWidth={2.6}
+            >
+              {detailShort}
+            </Text>
+          )}
         </Billboard>
       </group>
     </group>

@@ -6,7 +6,7 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook/session-start >/dev/null 2>&1 || true"
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook/session-start >/dev/null 2>&1 || true # clawddesk"
           }
         ]
       }
@@ -19,7 +19,8 @@
             "url": "http://127.0.0.1:3001/hook/generating",
             "timeout": 3,
             "headers": {
-              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT",
+              "X-ClawdDesk": "1"
             },
             "allowedEnvVars": [
               "CLAUDE_CODE_ENTRYPOINT"
@@ -37,11 +38,24 @@
             "url": "http://127.0.0.1:3001/hook/tool-use",
             "timeout": 3,
             "headers": {
-              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT",
+              "X-ClawdDesk": "1"
             },
             "allowedEnvVars": [
               "CLAUDE_CODE_ENTRYPOINT"
             ]
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true # clawddesk"
           }
         ]
       }
@@ -55,7 +69,8 @@
             "url": "http://127.0.0.1:3001/hook/tool-done",
             "timeout": 3,
             "headers": {
-              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT",
+              "X-ClawdDesk": "1"
             },
             "allowedEnvVars": [
               "CLAUDE_CODE_ENTRYPOINT"
@@ -72,7 +87,8 @@
             "url": "http://127.0.0.1:3001/hook/tool-done",
             "timeout": 3,
             "headers": {
-              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT",
+              "X-ClawdDesk": "1"
             },
             "allowedEnvVars": [
               "CLAUDE_CODE_ENTRYPOINT"
@@ -90,11 +106,47 @@
             "url": "http://127.0.0.1:3001/hook/idle",
             "timeout": 3,
             "headers": {
-              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT",
+              "X-ClawdDesk": "1"
             },
             "allowedEnvVars": [
               "CLAUDE_CODE_ENTRYPOINT"
             ]
+          }
+        ]
+      }
+    ],
+    "Elicitation": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true # clawddesk"
+          }
+        ]
+      }
+    ],
+    "ElicitationResult": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true # clawddesk"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true # clawddesk"
           }
         ]
       }
@@ -105,7 +157,7 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true"
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true # clawddesk"
           }
         ]
       }
@@ -116,7 +168,18 @@
           {
             "type": "command",
             "timeout": 5,
-            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true"
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true # clawddesk"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "curl -s -m 2 -X POST -H 'Content-Type: application/json' -H \"X-Claude-Entrypoint: $CLAUDE_CODE_ENTRYPOINT\" --data-binary @- http://127.0.0.1:3001/hook >/dev/null 2>&1 || true # clawddesk"
           }
         ]
       }
@@ -129,7 +192,8 @@
             "url": "http://127.0.0.1:3001/hook/idle",
             "timeout": 3,
             "headers": {
-              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT",
+              "X-ClawdDesk": "1"
             },
             "allowedEnvVars": [
               "CLAUDE_CODE_ENTRYPOINT"
@@ -146,7 +210,8 @@
             "url": "http://127.0.0.1:3001/hook/offline",
             "timeout": 3,
             "headers": {
-              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT"
+              "X-Claude-Entrypoint": "$CLAUDE_CODE_ENTRYPOINT",
+              "X-ClawdDesk": "1"
             },
             "allowedEnvVars": [
               "CLAUDE_CODE_ENTRYPOINT"

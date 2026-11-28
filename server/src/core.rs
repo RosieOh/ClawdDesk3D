@@ -49,9 +49,15 @@ enum Event {
     PreToolUse,
     PostToolUse,
     Notification,
+    /// Claude is blocked on the human: a permission dialog or an MCP elicitation form.
+    Attention,
+    /// The elicitation form was answered.
+    Resume,
     Stop,
-    SubagentStop,
+    /// Subagent start/stop: the parent's Task tool is still in flight, so only a keep-alive.
+    Heartbeat,
     PreCompact,
+    PostCompact,
     SessionEnd,
 }
 
@@ -63,9 +69,12 @@ impl Event {
             "PreToolUse" => Event::PreToolUse,
             "PostToolUse" | "PostToolUseFailure" => Event::PostToolUse,
             "Notification" => Event::Notification,
+            "PermissionRequest" | "Elicitation" => Event::Attention,
+            "ElicitationResult" => Event::Resume,
             "Stop" | "StopFailure" => Event::Stop,
-            "SubagentStop" => Event::SubagentStop,
+            "SubagentStart" | "SubagentStop" => Event::Heartbeat,
             "PreCompact" => Event::PreCompact,
+            "PostCompact" => Event::PostCompact,
             "SessionEnd" => Event::SessionEnd,
             _ => return None,
         })
@@ -104,6 +113,24 @@ pub struct Meta {
 enum Compaction {
     Auto,
     Manual,
+}
+
+impl Compaction {
+    fn from_trigger(payload: &Value) -> Self {
+        if field(payload, "trigger").as_deref() == Some("manual") {
+            Compaction::Manual
+        } else {
+            Compaction::Auto
+        }
+    }
+}
+
+/// After an auto-compaction mid-turn Claude keeps working; after `/compact` it waits for a prompt.
+fn after_compaction(trigger: Compaction) -> AgentState {
+    match trigger {
+        Compaction::Auto => AgentState::Generating,
+        Compaction::Manual => AgentState::Idle,
+    }
 }
 
 #[derive(Debug)]
@@ -285,15 +312,15 @@ impl SessionStore {
         match event {
             Event::SessionStart => {
                 tools.clear();
-                let trigger = compacting.take();
-                // After an auto-compaction mid-turn Claude keeps working; otherwise it waits for a prompt.
-                let resumed = field(payload, "source").as_deref() == Some("compact")
-                    && trigger == Some(Compaction::Auto);
-                s.state = if resumed {
-                    AgentState::Generating
+                if field(payload, "source").as_deref() == Some("compact") {
+                    // The restart after a compaction. If PostCompact already settled the state, keep it.
+                    if let Some(trigger) = compacting.take() {
+                        s.state = after_compaction(trigger);
+                    }
                 } else {
-                    AgentState::Idle
-                };
+                    *compacting = None;
+                    s.state = AgentState::Idle;
+                }
             }
             Event::UserPromptSubmit => {
                 tools.clear();
@@ -333,19 +360,28 @@ impl SessionStore {
                 }
             }
             Event::PreCompact => {
-                *compacting = Some(if field(payload, "trigger").as_deref() == Some("manual") {
-                    Compaction::Manual
-                } else {
-                    Compaction::Auto
-                });
+                *compacting = Some(Compaction::from_trigger(payload));
                 tools.clear();
                 s.state = AgentState::ToolRunning;
                 s.tool = Some("Compact".into());
                 s.running = 0;
                 return Some(s.clone());
             }
-            // The parent's Task tool is still in flight; its PostToolUse settles the state. Just a heartbeat.
-            Event::SubagentStop => {}
+            Event::Attention => s.state = AgentState::Waiting,
+            Event::Resume => {
+                if prev == AgentState::Waiting {
+                    s.state = AgentState::Generating;
+                }
+            }
+            Event::PostCompact => {
+                let trigger = compacting
+                    .take()
+                    .unwrap_or_else(|| Compaction::from_trigger(payload));
+                tools.clear();
+                s.state = after_compaction(trigger);
+            }
+            // The parent's Task tool is still in flight; its PostToolUse settles the state.
+            Event::Heartbeat => {}
             Event::Stop => {
                 tools.clear();
                 s.state = AgentState::Idle;

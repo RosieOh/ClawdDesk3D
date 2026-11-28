@@ -49,9 +49,15 @@ enum Event {
     PreToolUse,
     PostToolUse,
     Notification,
+    /// Claude is blocked on the human: a permission dialog or an MCP elicitation form.
+    Attention,
+    /// The elicitation form was answered.
+    Resume,
     Stop,
-    SubagentStop,
+    /// Subagent start/stop: the parent's Task tool is still in flight, so only a keep-alive.
+    Heartbeat,
     PreCompact,
+    PostCompact,
     SessionEnd,
 }
 
@@ -63,9 +69,12 @@ impl Event {
             "PreToolUse" => Event::PreToolUse,
             "PostToolUse" | "PostToolUseFailure" => Event::PostToolUse,
             "Notification" => Event::Notification,
+            "PermissionRequest" | "Elicitation" => Event::Attention,
+            "ElicitationResult" => Event::Resume,
             "Stop" | "StopFailure" => Event::Stop,
-            "SubagentStop" => Event::SubagentStop,
+            "SubagentStart" | "SubagentStop" => Event::Heartbeat,
             "PreCompact" => Event::PreCompact,
+            "PostCompact" => Event::PostCompact,
             "SessionEnd" => Event::SessionEnd,
             _ => return None,
         })
@@ -104,6 +113,24 @@ pub struct Meta {
 enum Compaction {
     Auto,
     Manual,
+}
+
+impl Compaction {
+    fn from_trigger(payload: &Value) -> Self {
+        if field(payload, "trigger").as_deref() == Some("manual") {
+            Compaction::Manual
+        } else {
+            Compaction::Auto
+        }
+    }
+}
+
+/// After an auto-compaction mid-turn Claude keeps working; after `/compact` it waits for a prompt.
+fn after_compaction(trigger: Compaction) -> AgentState {
+    match trigger {
+        Compaction::Auto => AgentState::Generating,
+        Compaction::Manual => AgentState::Idle,
+    }
 }
 
 #[derive(Debug)]
@@ -225,10 +252,17 @@ impl SessionStore {
     }
 
     /// Apply one hook event at time `now` (ms). Returns the updated session, or `None` if ignored.
-    pub fn apply(&mut self, event_name: &str, payload: &Value, meta: &Meta, now: u64) -> Option<Session> {
+    pub fn apply(
+        &mut self,
+        event_name: &str,
+        payload: &Value,
+        meta: &Meta,
+        now: u64,
+    ) -> Option<Session> {
         let event = Event::parse(event_name)?;
         let cwd = field(payload, "cwd");
-        let raw_id = field(payload, "session_id").or_else(|| meta.session_id.clone().filter(|s| !s.is_empty()));
+        let raw_id = field(payload, "session_id")
+            .or_else(|| meta.session_id.clone().filter(|s| !s.is_empty()));
         if raw_id.is_none() && cwd.is_none() {
             return None; // nothing to attribute this to
         }
@@ -252,14 +286,23 @@ impl SessionStore {
             tools: Vec::new(),
             compacting: None,
         });
-        let Entry { session: s, tools, compacting } = entry;
+        let Entry {
+            session: s,
+            tools,
+            compacting,
+        } = entry;
         let prev = s.state;
 
         if let Some(cwd) = cwd {
             s.project = project_from_cwd(&cwd);
             s.cwd = cwd;
         }
-        let src = normalize_source(meta.entrypoint.as_deref().filter(|e| !e.is_empty()).or(payload.get("entrypoint").and_then(Value::as_str)));
+        let src = normalize_source(
+            meta.entrypoint
+                .as_deref()
+                .filter(|e| !e.is_empty())
+                .or(payload.get("entrypoint").and_then(Value::as_str)),
+        );
         if src != "unknown" {
             s.source = src;
         }
@@ -269,10 +312,15 @@ impl SessionStore {
         match event {
             Event::SessionStart => {
                 tools.clear();
-                let trigger = compacting.take();
-                // After an auto-compaction mid-turn Claude keeps working; otherwise it waits for a prompt.
-                let resumed = field(payload, "source").as_deref() == Some("compact") && trigger == Some(Compaction::Auto);
-                s.state = if resumed { AgentState::Generating } else { AgentState::Idle };
+                if field(payload, "source").as_deref() == Some("compact") {
+                    // The restart after a compaction. If PostCompact already settled the state, keep it.
+                    if let Some(trigger) = compacting.take() {
+                        s.state = after_compaction(trigger);
+                    }
+                } else {
+                    *compacting = None;
+                    s.state = AgentState::Idle;
+                }
             }
             Event::UserPromptSubmit => {
                 tools.clear();
@@ -293,7 +341,8 @@ impl SessionStore {
                 s.state = AgentState::ToolRunning;
             }
             Event::PostToolUse => {
-                let by_id = field(payload, "tool_use_id").and_then(|id| tools.iter().position(|(k, _)| *k == id));
+                let by_id = field(payload, "tool_use_id")
+                    .and_then(|id| tools.iter().position(|(k, _)| *k == id));
                 let idx = by_id.or_else(|| {
                     let name = short_tool_name(field(payload, "tool_name").as_deref());
                     tools.iter().position(|(_, v)| *v == name)
@@ -311,19 +360,28 @@ impl SessionStore {
                 }
             }
             Event::PreCompact => {
-                *compacting = Some(if field(payload, "trigger").as_deref() == Some("manual") {
-                    Compaction::Manual
-                } else {
-                    Compaction::Auto
-                });
+                *compacting = Some(Compaction::from_trigger(payload));
                 tools.clear();
                 s.state = AgentState::ToolRunning;
                 s.tool = Some("Compact".into());
                 s.running = 0;
                 return Some(s.clone());
             }
-            // The parent's Task tool is still in flight; its PostToolUse settles the state. Just a heartbeat.
-            Event::SubagentStop => {}
+            Event::Attention => s.state = AgentState::Waiting,
+            Event::Resume => {
+                if prev == AgentState::Waiting {
+                    s.state = AgentState::Generating;
+                }
+            }
+            Event::PostCompact => {
+                let trigger = compacting
+                    .take()
+                    .unwrap_or_else(|| Compaction::from_trigger(payload));
+                tools.clear();
+                s.state = after_compaction(trigger);
+            }
+            // The parent's Task tool is still in flight; its PostToolUse settles the state.
+            Event::Heartbeat => {}
             Event::Stop => {
                 tools.clear();
                 s.state = AgentState::Idle;
@@ -365,11 +423,16 @@ impl SessionStore {
             .iter()
             .filter(|(_, e)| {
                 let age = now.saturating_sub(e.session.last_seen);
-                age > STALE_MS || (e.session.state == AgentState::Offline && age > OFFLINE_LINGER_MS)
+                age > STALE_MS
+                    || (e.session.state == AgentState::Offline && age > OFFLINE_LINGER_MS)
             })
             .map(|(id, _)| id.clone())
             .collect();
-        expired.into_iter().filter_map(|id| self.entries.remove(&id)).map(|e| e.session).collect()
+        expired
+            .into_iter()
+            .filter_map(|id| self.entries.remove(&id))
+            .map(|e| e.session)
+            .collect()
     }
 
     /// Sessions, most recently active first.
@@ -394,14 +457,19 @@ mod tests {
 
     impl Harness {
         fn new() -> Self {
-            Self { store: SessionStore::new(), t: 1_000 }
+            Self {
+                store: SessionStore::new(),
+                t: 1_000,
+            }
         }
         fn fire_meta(&mut self, event: &str, extra: Value, meta: Meta) -> Session {
             let mut p = json!({ "session_id": SID, "cwd": "/Users/me/dev/my-app", "hook_event_name": event });
             if let (Value::Object(base), Value::Object(more)) = (&mut p, extra) {
                 base.extend(more);
             }
-            self.store.apply(event, &p, &meta, self.t).expect("event should apply")
+            self.store
+                .apply(event, &p, &meta, self.t)
+                .expect("event should apply")
         }
         fn fire(&mut self, event: &str, extra: Value) -> Session {
             self.fire_meta(event, extra, Meta::default())
@@ -418,8 +486,22 @@ mod tests {
         assert_eq!(s.state, Generating);
         assert_eq!(s.prompts, 1);
         assert_eq!(s.project, "my-app");
-        assert_eq!(h.fire("PreToolUse", json!({ "tool_name": "Read", "tool_use_id": "a" })).state, ToolRunning);
-        assert_eq!(h.fire("PostToolUse", json!({ "tool_name": "Read", "tool_use_id": "a" })).state, Generating);
+        assert_eq!(
+            h.fire(
+                "PreToolUse",
+                json!({ "tool_name": "Read", "tool_use_id": "a" })
+            )
+            .state,
+            ToolRunning
+        );
+        assert_eq!(
+            h.fire(
+                "PostToolUse",
+                json!({ "tool_name": "Read", "tool_use_id": "a" })
+            )
+            .state,
+            Generating
+        );
         assert_eq!(h.fire("Stop", json!({})).state, Idle);
         assert_eq!(h.fire("SessionEnd", json!({})).state, Offline);
     }
@@ -428,17 +510,29 @@ mod tests {
     fn parallel_tools_stay_running_until_the_last_one_finishes() {
         let mut h = Harness::new();
         h.fire("UserPromptSubmit", json!({}));
-        h.fire("PreToolUse", json!({ "tool_name": "Read", "tool_use_id": "a" }));
-        let s = h.fire("PreToolUse", json!({ "tool_name": "Grep", "tool_use_id": "b" }));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Read", "tool_use_id": "a" }),
+        );
+        let s = h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Grep", "tool_use_id": "b" }),
+        );
         assert_eq!(s.running, 2);
         assert_eq!(s.tool.as_deref(), Some("Grep"));
 
-        let s = h.fire("PostToolUse", json!({ "tool_name": "Grep", "tool_use_id": "b" }));
+        let s = h.fire(
+            "PostToolUse",
+            json!({ "tool_name": "Grep", "tool_use_id": "b" }),
+        );
         assert_eq!(s.state, ToolRunning);
         assert_eq!(s.tool.as_deref(), Some("Read"));
         assert_eq!(s.running, 1);
 
-        let s = h.fire("PostToolUseFailure", json!({ "tool_name": "Read", "tool_use_id": "a" }));
+        let s = h.fire(
+            "PostToolUseFailure",
+            json!({ "tool_name": "Read", "tool_use_id": "a" }),
+        );
         assert_eq!(s.state, Generating);
         assert_eq!(s.tool, None);
         assert_eq!(s.running, 0);
@@ -458,7 +552,10 @@ mod tests {
     fn pre_tool_use_without_prompt_still_shows_tool() {
         let mut h = Harness::new();
         h.fire("SessionStart", json!({}));
-        let s = h.fire("PreToolUse", json!({ "tool_name": "mcp__github__create_issue", "tool_use_id": "x" }));
+        let s = h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "mcp__github__create_issue", "tool_use_id": "x" }),
+        );
         assert_eq!(s.state, ToolRunning);
         assert_eq!(s.tool.as_deref(), Some("create_issue"));
     }
@@ -467,7 +564,10 @@ mod tests {
     fn stop_clears_dangling_tools() {
         // e.g. a denied permission never gets PostToolUse
         let mut h = Harness::new();
-        h.fire("PreToolUse", json!({ "tool_name": "Bash", "tool_use_id": "a" }));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Bash", "tool_use_id": "a" }),
+        );
         h.fire("Stop", json!({}));
         assert_eq!(h.fire("UserPromptSubmit", json!({})).state, Generating);
     }
@@ -476,23 +576,47 @@ mod tests {
     fn permission_notification_waits_and_approval_resumes() {
         let mut h = Harness::new();
         h.fire("UserPromptSubmit", json!({}));
-        h.fire("PreToolUse", json!({ "tool_name": "Bash", "tool_use_id": "a" }));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Bash", "tool_use_id": "a" }),
+        );
         let s = h.fire(
             "Notification",
             json!({ "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash" }),
         );
         assert_eq!(s.state, Waiting);
         assert_eq!(s.tool, None);
-        assert_eq!(h.fire("PostToolUse", json!({ "tool_name": "Bash", "tool_use_id": "a" })).state, Generating);
+        assert_eq!(
+            h.fire(
+                "PostToolUse",
+                json!({ "tool_name": "Bash", "tool_use_id": "a" })
+            )
+            .state,
+            Generating
+        );
     }
 
     #[test]
     fn idle_notification_does_not_interrupt_a_turn() {
         let mut h = Harness::new();
         h.fire("UserPromptSubmit", json!({}));
-        assert_eq!(h.fire("Notification", json!({ "notification_type": "idle_prompt" })).state, Generating);
+        assert_eq!(
+            h.fire(
+                "Notification",
+                json!({ "notification_type": "idle_prompt" })
+            )
+            .state,
+            Generating
+        );
         h.fire("Stop", json!({}));
-        assert_eq!(h.fire("Notification", json!({ "notification_type": "idle_prompt" })).state, Idle);
+        assert_eq!(
+            h.fire(
+                "Notification",
+                json!({ "notification_type": "idle_prompt" })
+            )
+            .state,
+            Idle
+        );
     }
 
     #[test]
@@ -502,17 +626,107 @@ mod tests {
         let s = h.fire("PreCompact", json!({ "trigger": "auto" }));
         assert_eq!(s.state, ToolRunning);
         assert_eq!(s.tool.as_deref(), Some("Compact"));
-        assert_eq!(h.fire("SessionStart", json!({ "source": "compact" })).state, Generating);
+        assert_eq!(
+            h.fire("SessionStart", json!({ "source": "compact" })).state,
+            Generating
+        );
 
         h.fire("Stop", json!({}));
         h.fire("PreCompact", json!({ "trigger": "manual" }));
-        assert_eq!(h.fire("SessionStart", json!({ "source": "compact" })).state, Idle);
+        assert_eq!(
+            h.fire("SessionStart", json!({ "source": "compact" })).state,
+            Idle
+        );
+    }
+
+    #[test]
+    fn permission_request_waits_immediately() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Bash", "tool_use_id": "a" }),
+        );
+        let s = h.fire("PermissionRequest", json!({ "tool_name": "Bash" }));
+        assert_eq!(s.state, Waiting);
+        assert_eq!(s.running, 1);
+        assert_eq!(
+            h.fire(
+                "PostToolUse",
+                json!({ "tool_name": "Bash", "tool_use_id": "a" })
+            )
+            .state,
+            Generating
+        );
+    }
+
+    #[test]
+    fn elicitation_round_trip() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "mcp__jira__create", "tool_use_id": "m" }),
+        );
+        assert_eq!(h.fire("Elicitation", json!({})).state, Waiting);
+        let s = h.fire("ElicitationResult", json!({}));
+        assert_eq!(
+            s.state, ToolRunning,
+            "the MCP tool that asked is still running"
+        );
+        assert_eq!(s.tool.as_deref(), Some("create"));
+        // A stray result outside WAITING changes nothing.
+        h.fire("Stop", json!({}));
+        assert_eq!(h.fire("ElicitationResult", json!({})).state, Idle);
+    }
+
+    #[test]
+    fn post_compact_settles_before_the_compact_restart() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire("PreCompact", json!({ "trigger": "auto" }));
+        assert_eq!(
+            h.fire("PostCompact", json!({ "trigger": "auto" })).state,
+            Generating
+        );
+        assert_eq!(
+            h.fire("SessionStart", json!({ "source": "compact" })).state,
+            Generating,
+            "restart keeps the settled state"
+        );
+
+        h.fire("Stop", json!({}));
+        h.fire("PreCompact", json!({ "trigger": "manual" }));
+        assert_eq!(
+            h.fire("PostCompact", json!({})).state,
+            Idle,
+            "pending trigger wins over a missing payload field"
+        );
+        assert_eq!(
+            h.fire("SessionStart", json!({ "source": "compact" })).state,
+            Idle
+        );
+    }
+
+    #[test]
+    fn subagent_start_is_only_a_heartbeat() {
+        let mut h = Harness::new();
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Task", "tool_use_id": "t" }),
+        );
+        let s = h.fire("SubagentStart", json!({}));
+        assert_eq!(s.state, ToolRunning);
+        assert_eq!(s.tool.as_deref(), Some("Task"));
     }
 
     #[test]
     fn subagent_stop_is_only_a_heartbeat() {
         let mut h = Harness::new();
-        h.fire("PreToolUse", json!({ "tool_name": "Task", "tool_use_id": "t" }));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Task", "tool_use_id": "t" }),
+        );
         h.t += 5_000;
         let s = h.fire("SubagentStop", json!({}));
         assert_eq!(s.state, ToolRunning);
@@ -523,18 +737,37 @@ mod tests {
     #[test]
     fn entrypoint_header_normalizes_source() {
         let mut h = Harness::new();
-        let meta = |e: &str| Meta { entrypoint: Some(e.into()), session_id: None };
-        assert_eq!(h.fire_meta("SessionStart", json!({}), meta("claude-vscode")).source, "vscode");
+        let meta = |e: &str| Meta {
+            entrypoint: Some(e.into()),
+            session_id: None,
+        };
+        assert_eq!(
+            h.fire_meta("SessionStart", json!({}), meta("claude-vscode"))
+                .source,
+            "vscode"
+        );
         assert_eq!(h.fire_meta("Stop", json!({}), meta("cli")).source, "cli");
-        assert_eq!(h.fire("Stop", json!({})).source, "cli", "missing header keeps the last known source");
+        assert_eq!(
+            h.fire("Stop", json!({})).source,
+            "cli",
+            "missing header keeps the last known source"
+        );
     }
 
     #[test]
     fn unknown_events_and_unattributable_payloads_are_ignored() {
         let mut store = SessionStore::new();
         let m = Meta::default();
-        assert!(store.apply("Bogus", &json!({ "session_id": SID, "cwd": "/x" }), &m, 0).is_none());
-        assert!(store.apply("Stop", &json!({ "hook_event_name": "Stop" }), &m, 0).is_none());
+        assert!(
+            store
+                .apply("Bogus", &json!({ "session_id": SID, "cwd": "/x" }), &m, 0)
+                .is_none()
+        );
+        assert!(
+            store
+                .apply("Stop", &json!({ "hook_event_name": "Stop" }), &m, 0)
+                .is_none()
+        );
         assert_eq!(store.len(), 0);
     }
 
@@ -542,7 +775,12 @@ mod tests {
     fn sweep_expires_stale_and_ended_sessions() {
         let mut h = Harness::new();
         h.fire("SessionStart", json!({}));
-        h.store.apply("SessionEnd", &json!({ "session_id": "other", "cwd": "/x" }), &Meta::default(), h.t);
+        h.store.apply(
+            "SessionEnd",
+            &json!({ "session_id": "other", "cwd": "/x" }),
+            &Meta::default(),
+            h.t,
+        );
         h.t += OFFLINE_LINGER_MS + 1;
         let ids: Vec<String> = h.store.sweep(h.t).into_iter().map(|s| s.id).collect();
         assert_eq!(ids, ["other"]);
@@ -555,15 +793,24 @@ mod tests {
     #[test]
     fn allowed_origins() {
         let none: [String; 0] = [];
-        assert!(is_allowed_origin(None, &none), "hooks / curl send no Origin");
+        assert!(
+            is_allowed_origin(None, &none),
+            "hooks / curl send no Origin"
+        );
         assert!(is_allowed_origin(Some("http://localhost:5173"), &none));
         assert!(is_allowed_origin(Some("http://127.0.0.1:4173"), &none));
         assert!(is_allowed_origin(Some("http://[::1]:5173"), &none));
         assert!(!is_allowed_origin(Some("https://evil.example"), &none));
-        assert!(!is_allowed_origin(Some("http://localhost.evil.example"), &none));
+        assert!(!is_allowed_origin(
+            Some("http://localhost.evil.example"),
+            &none
+        ));
         assert!(!is_allowed_origin(Some("null"), &none));
         assert!(!is_allowed_origin(Some("file://"), &none));
-        assert!(is_allowed_origin(Some("https://desk.example"), &["https://desk.example".to_string()]));
+        assert!(is_allowed_origin(
+            Some("https://desk.example"),
+            &["https://desk.example".to_string()]
+        ));
     }
 
     #[test]
@@ -571,8 +818,12 @@ mod tests {
         assert_eq!(project_from_cwd("C:\\code\\proj\\"), "proj");
         assert_eq!(project_from_cwd(""), "unknown");
         assert_eq!(short_tool_name(None), "Tool");
-        assert!(is_attention_notification(&json!({ "message": "Claude needs your permission to use Bash" })));
-        assert!(!is_attention_notification(&json!({ "message": "Claude is waiting for your input" })));
+        assert!(is_attention_notification(
+            &json!({ "message": "Claude needs your permission to use Bash" })
+        ));
+        assert!(!is_attention_notification(
+            &json!({ "message": "Claude is waiting for your input" })
+        ));
         assert_eq!(parse_origin_list(Some(" a, ,b ")), ["a", "b"]);
     }
 }

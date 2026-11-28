@@ -1,0 +1,27 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "ignorePaths": ["node_modules", "**/target", "**/dist", "package-lock.json", "server/Cargo.lock"],
+  "words": [
+    "clawd",
+    "clawddesk",
+    "vite",
+    "vitest",
+    "zustand",
+    "drei",
+    "troika",
+    "fontsource",
+    "postprocessing",
+    "lightformer",
+    "mipmap",
+    "axum",
+    "tokio",
+    "rustup",
+    "rustfmt",
+    "dtolnay",
+    "swatinem",
+    "dependabot",
+    "pgrep",
+    "elicitation"
+  ]
+}

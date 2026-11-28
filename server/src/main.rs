@@ -25,7 +25,9 @@ use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::broadcast};
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 
-use crate::core::{Meta, ROUTE_EVENTS, Session, SessionStore, is_allowed_origin, parse_origin_list};
+use crate::core::{
+    Meta, ROUTE_EVENTS, Session, SessionStore, is_allowed_origin, parse_origin_list,
+};
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -42,11 +44,14 @@ struct AppState {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 fn snapshot(reason: &str, sessions: Vec<Session>) -> String {
-    json!({ "type": "snapshot", "reason": reason, "serverTime": now_ms(), "sessions": sessions }).to_string()
+    json!({ "type": "snapshot", "reason": reason, "serverTime": now_ms(), "sessions": sessions })
+        .to_string()
 }
 
 impl AppState {
@@ -77,14 +82,24 @@ async fn origin_guard(State(app): State<AppState>, req: Request, next: Next) -> 
     if app.origin_ok(origin) {
         return next.run(req).await;
     }
-    eprintln!("[http] blocked origin {} {} {}", origin.unwrap_or(""), req.method(), req.uri().path());
+    eprintln!(
+        "[http] blocked origin {} {} {}",
+        origin.unwrap_or(""),
+        req.method(),
+        req.uri().path()
+    );
     StatusCode::FORBIDDEN.into_response()
 }
 
 /// Always answers an empty 200 (= "success, no decision") so Claude Code is never blocked by the visualizer,
 /// even for oversized or malformed bodies. The payload's hook_event_name wins over the route,
 /// so e.g. a Notification posted to /hook/idle is handled correctly.
-async fn handle_hook(app: &AppState, default_event: Option<&str>, headers: &HeaderMap, body: Body) -> StatusCode {
+async fn handle_hook(
+    app: &AppState,
+    default_event: Option<&str>,
+    headers: &HeaderMap,
+    body: Body,
+) -> StatusCode {
     let bytes = match to_bytes(body, BODY_LIMIT).await {
         Ok(b) => b,
         Err(err) => {
@@ -105,7 +120,12 @@ async fn handle_hook(app: &AppState, default_event: Option<&str>, headers: &Head
         }
     };
 
-    let Some(event) = payload.get("hook_event_name").and_then(Value::as_str).filter(|s| !s.is_empty()).or(default_event) else {
+    let Some(event) = payload
+        .get("hook_event_name")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .or(default_event)
+    else {
         return StatusCode::OK;
     };
     let meta = Meta {
@@ -122,7 +142,9 @@ async fn handle_hook(app: &AppState, default_event: Option<&str>, headers: &Head
             .or(meta.session_id.as_deref())
             .unwrap_or("default");
         let prev = store.get(lookup).map(|s| s.state.as_str());
-        store.apply(event, &payload, &meta, now_ms()).map(|s| (prev, s))
+        store
+            .apply(event, &payload, &meta, now_ms())
+            .map(|s| (prev, s))
     };
 
     if let Some((prev, s)) = updated {
@@ -144,7 +166,12 @@ async fn handle_hook(app: &AppState, default_event: Option<&str>, headers: &Head
     StatusCode::OK
 }
 
-async fn hook_route(State(app): State<AppState>, Path(route): Path<String>, headers: HeaderMap, body: Body) -> StatusCode {
+async fn hook_route(
+    State(app): State<AppState>,
+    Path(route): Path<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> StatusCode {
     match ROUTE_EVENTS.iter().find(|(r, _)| *r == route) {
         Some((_, event)) => handle_hook(&app, Some(event), &headers, body).await,
         None => StatusCode::NOT_FOUND,
@@ -161,7 +188,10 @@ async fn get_state(State(app): State<AppState>) -> impl IntoResponse {
 }
 
 /// `GET /` is both the info endpoint and the WebSocket endpoint (the client connects to ws://host:port).
-async fn root(State(app): State<AppState>, ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>) -> Response {
+async fn root(
+    State(app): State<AppState>,
+    ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
+) -> Response {
     match ws {
         Ok(ws) => ws.on_upgrade(move |socket| client_loop(app, socket)),
         Err(_) => {
@@ -182,7 +212,11 @@ async fn root(State(app): State<AppState>, ws: Result<WebSocketUpgrade, WebSocke
 async fn client_loop(app: AppState, socket: WebSocket) {
     let (mut sink, mut stream) = socket.split();
     let mut rx = app.tx.subscribe();
-    if sink.send(Message::Text(app.snapshot("hello").into())).await.is_err() {
+    if sink
+        .send(Message::Text(app.snapshot("hello").into()))
+        .await
+        .is_err()
+    {
         return;
     }
 
@@ -224,7 +258,8 @@ async fn shutdown_signal() {
     };
     #[cfg(unix)]
     let term = async {
-        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
             s.recv().await;
         }
     };
@@ -241,9 +276,14 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let port: u16 = env("CLAWDDESK_PORT").or_else(|| env("PORT")).and_then(|p| p.parse().ok()).unwrap_or(3001);
+    let port: u16 = env("CLAWDDESK_PORT")
+        .or_else(|| env("PORT"))
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3001);
     let host = env("CLAWDDESK_HOST").unwrap_or_else(|| "127.0.0.1".into()); // loopback only
-    let extra_origins = Arc::new(parse_origin_list(env("CLAWDDESK_ALLOWED_ORIGINS").as_deref()));
+    let extra_origins = Arc::new(parse_origin_list(
+        env("CLAWDDESK_ALLOWED_ORIGINS").as_deref(),
+    ));
 
     let (tx, _) = broadcast::channel(64);
     let app = AppState {

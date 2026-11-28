@@ -49,8 +49,14 @@ export function connectBridge(): () => void {
     disposed = true;
     window.clearTimeout(timer);
     if (ws) {
-      ws.onclose = null;
-      ws.close();
+      const sock = ws;
+      sock.onclose = null;
+      sock.onmessage = null;
+      sock.onerror = null;
+      // Closing a socket that is still connecting logs a browser warning (React StrictMode mounts twice in dev),
+      // so let it finish the handshake and close it then.
+      if (sock.readyState === WebSocket.CONNECTING) sock.onopen = () => sock.close();
+      else sock.close();
     }
   };
 }

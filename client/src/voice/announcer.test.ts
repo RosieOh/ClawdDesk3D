@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentState, Session } from '../store';
-import { Announcer, phrase, statusReport, type Announcement } from './announcer';
+import { Announcer, phrase, statusReport, welcomeBack, type Announcement } from './announcer';
 import { pickVoice } from './speech';
 import { effectiveSessions } from './useJarvisVoice';
 
@@ -169,5 +169,14 @@ describe('statusReport', () => {
   it('everyone idle', () => {
     expect(statusReport([s('a', 'IDLE')], 'en')).toBe('Sir, 1 session is online. It is standing by.');
     expect(statusReport([s('a', 'IDLE'), s('b', 'IDLE')], 'en')).toBe('Sir, 2 sessions are online. All are standing by.');
+  });
+});
+
+describe('welcomeBack', () => {
+  it('greets with what happened while away', () => {
+    expect(welcomeBack([], 'en')).toBe('Welcome back, sir. All quiet while you were away.');
+    expect(welcomeBack(['web-app is complete, sir.'], 'en')).toBe('Welcome back, sir. While you were away: web-app is complete, sir.');
+    expect(welcomeBack(['a.', 'b.', 'c.', 'd.', 'e.'], 'en')).toBe('Welcome back, sir. While you were away: a. b. c. And 2 more.');
+    expect(welcomeBack(['web-app 작업을 마쳤습니다.'], 'ko')).toBe('다시 오셨군요. 자리를 비우신 동안: web-app 작업을 마쳤습니다.');
   });
 });

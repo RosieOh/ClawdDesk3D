@@ -75,6 +75,8 @@ struct AppState {
     voice_lab: Arc<Mutex<Option<LabInfo>>>,
     /// tasks sent to Claude from the desk (spoken commands)
     commands: Arc<Mutex<Commands>>,
+    /// are you at the desk? (camera presence from the menu bar app; None = unknown / not watching)
+    user: Arc<Mutex<Option<UserPresence>>>,
     store: Arc<Mutex<SessionStore>>,
     tx: broadcast::Sender<String>,
     extra_origins: Arc<Vec<String>>,
@@ -83,6 +85,19 @@ struct AppState {
     /// Claude config dir; transcripts are only read from inside it.
     transcript_root: Option<Arc<PathBuf>>,
 }
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserPresence {
+    present: bool,
+    /// when it last changed (ms)
+    since: u64,
+    #[serde(skip)]
+    updated: Instant,
+}
+
+/// Presence is forgotten if the app stops reporting it (quit, camera off without telling us).
+const USER_PRESENCE_TTL: Duration = Duration::from_secs(60);
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -96,6 +111,7 @@ fn snapshot(
     approvals: Vec<Pending>,
     voice_lab: Option<LabInfo>,
     commands: Vec<commands::Command>,
+    user: Option<UserPresence>,
 ) -> String {
     json!({
         "type": "snapshot",
@@ -105,6 +121,7 @@ fn snapshot(
         "approvals": approvals,
         "voiceLab": voice_lab,
         "commands": commands,
+        "user": user,
     })
     .to_string()
 }
@@ -115,7 +132,14 @@ impl AppState {
         let approvals = self.approvals.lock().unwrap().list();
         let voice_lab = self.voice_lab.lock().unwrap().clone();
         let commands = self.commands.lock().unwrap().list();
-        snapshot(reason, sessions, approvals, voice_lab, commands)
+        snapshot(
+            reason,
+            sessions,
+            approvals,
+            voice_lab,
+            commands,
+            self.user_presence(),
+        )
     }
 
     fn broadcast(&self, reason: &str) {
@@ -127,8 +151,20 @@ impl AppState {
         is_allowed_origin(origin, &self.extra_origins)
     }
 
-    /// Someone can answer a permission request right now: a visible desk or the menu bar app.
+    fn user_presence(&self) -> Option<UserPresence> {
+        self.user
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|u| u.updated.elapsed() < USER_PRESENCE_TTL)
+    }
+
+    /// Someone can answer a permission request right now: a visible desk or the menu bar app —
+    /// and, when the camera says you've stepped away, nobody.
     fn has_approver(&self) -> bool {
+        if self.user_presence().is_some_and(|u| !u.present) {
+            return false;
+        }
         self.approvers.load(Ordering::SeqCst) > 0
             || self
                 .app_approver_until
@@ -435,6 +471,47 @@ async fn command(
 }
 
 #[derive(serde::Deserialize)]
+struct UserPresenceBody {
+    present: Option<bool>,
+}
+
+/// The menu bar app reports whether you're at the desk (camera presence), or `null` when it stops watching.
+async fn user_presence(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<UserPresenceBody>,
+) -> StatusCode {
+    if header(&headers, "x-clawddesk-app").is_none() {
+        return StatusCode::FORBIDDEN;
+    }
+    let changed = {
+        let mut user = app.user.lock().unwrap();
+        let before = user.as_ref().map(|u| u.present);
+        *user = body.present.map(|present| UserPresence {
+            present,
+            since: match user.as_ref() {
+                Some(u) if u.present == present => u.since,
+                _ => now_ms(),
+            },
+            updated: Instant::now(),
+        });
+        before != body.present
+    };
+    if changed {
+        println!(
+            "[presence] {}",
+            match body.present {
+                Some(true) => "at the desk",
+                Some(false) => "away",
+                None => "unknown",
+            }
+        );
+        app.broadcast("presence");
+    }
+    StatusCode::NO_CONTENT
+}
+
+#[derive(serde::Deserialize)]
 struct AppPresence {
     approvals: bool,
 }
@@ -663,6 +740,7 @@ pub async fn serve(
         approvers: Arc::new(AtomicUsize::new(0)),
         voice_lab: Arc::new(Mutex::new(None)),
         commands: Arc::new(Mutex::new(Commands::default())),
+        user: Arc::new(Mutex::new(None)),
         app_approver_until: Arc::new(Mutex::new(None)),
         approval_timeout,
     };
@@ -683,6 +761,7 @@ pub async fn serve(
         .route("/approvals/{id}", post(decide))
         .route("/presence/app", post(app_presence))
         .route("/command", post(command))
+        .route("/presence/user", post(user_presence))
         .route("/hook/{route}", post(hook_route))
         .layer(cors)
         .layer(middleware::from_fn_with_state(app.clone(), origin_guard)) // outermost: runs first

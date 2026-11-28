@@ -10,11 +10,13 @@
 mod http;
 mod icon;
 mod model;
+mod presence;
 mod settings;
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    process::Child,
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -98,8 +100,13 @@ fn main() {
                 eprintln!("[desktop] could not register ⌥⌘J: {err}");
             }
 
+            let user_present: Arc<Mutex<Option<bool>>> = Arc::new(Mutex::new(None));
+            {
+                let (settings, user_present) = (settings.clone(), user_present.clone());
+                thread::spawn(move || camera_presence(settings, user_present));
+            }
             let handle = app.handle().clone();
-            thread::spawn(move || watch(handle, settings));
+            thread::spawn(move || watch(handle, settings, user_present));
 
             // Opened by hand (Finder, Spotlight, `open`): show the desk. At login: stay in the menu bar.
             if !std::env::args().any(|a| a == HIDDEN_ARG) {
@@ -174,6 +181,11 @@ fn on_menu(app: &AppHandle, id: &str, settings: &Arc<Mutex<Settings>>) {
             let auto = app.autolaunch();
             let on = auto.is_enabled().unwrap_or(false);
             let _ = if on { auto.disable() } else { auto.enable() };
+        }
+        "camera-presence" => {
+            let mut s = settings.lock().unwrap();
+            s.camera_presence = !s.camera_presence;
+            s.save(app);
         }
         "menubar-approvals" => {
             let mut s = settings.lock().unwrap();
@@ -253,6 +265,14 @@ fn refresh_menu(app: &AppHandle, tray: &TrayIcon, view: &View, settings: &Settin
             settings.menubar_approvals,
             None::<&str>,
         )?)?;
+        menu.append(&CheckMenuItem::with_id(
+            app,
+            "camera-presence",
+            "Camera Presence (greets you, pauses when you're away)",
+            true,
+            settings.camera_presence,
+            None::<&str>,
+        )?)?;
         let login = app.autolaunch().is_enabled().unwrap_or(false);
         menu.append(&CheckMenuItem::with_id(
             app,
@@ -283,7 +303,7 @@ fn refresh_menu(app: &AppHandle, tray: &TrayIcon, view: &View, settings: &Settin
 // ---------------------------------------------------------------- watcher
 
 /// Poll the bridge, keep the tray in sync, send notifications, renew the menu bar approver heartbeat.
-fn watch(app: AppHandle, settings: Arc<Mutex<Settings>>) {
+fn watch(app: AppHandle, settings: Arc<Mutex<Settings>>, user_present: Arc<Mutex<Option<bool>>>) {
     let mut last_signature = String::new();
     let mut seen_approvals: HashSet<String> = HashSet::new();
     let mut turns: HashMap<String, Instant> = HashMap::new();
@@ -300,7 +320,12 @@ fn watch(app: AppHandle, settings: Arc<Mutex<Settings>>) {
             let login = app.autolaunch().is_enabled().unwrap_or(false);
             (
                 s.menubar_approvals,
-                format!("{}|{}|{login}", view.signature(), s.menubar_approvals),
+                format!(
+                    "{}|{}|{}|{login}",
+                    view.signature(),
+                    s.menubar_approvals,
+                    s.camera_presence
+                ),
             )
         };
 
@@ -315,7 +340,8 @@ fn watch(app: AppHandle, settings: Arc<Mutex<Settings>>) {
         }
 
         // Notifications only when the desk isn't on screen (it speaks and shows cards itself).
-        let quiet = desk_visible(&app);
+        // …or when you're away from it (camera presence), the desk can't be heard or seen either.
+        let quiet = desk_visible(&app) && *user_present.lock().unwrap() != Some(false);
         for a in &view.approvals {
             if seen_approvals.insert(a.id.clone()) && !first && !quiet {
                 notify(
@@ -375,5 +401,90 @@ fn watch(app: AppHandle, settings: Arc<Mutex<Settings>>) {
 fn notify(app: &AppHandle, title: &str, body: &str) {
     if let Err(err) = app.notification().builder().title(title).body(body).show() {
         eprintln!("[desktop] notification: {err}");
+    }
+}
+
+// ---------------------------------------------------------------- camera presence
+
+/// While "Camera Presence" is on, run the Vision helper and tell the bridge whether you're at the desk.
+fn camera_presence(settings: Arc<Mutex<Settings>>, user_present: Arc<Mutex<Option<bool>>>) {
+    const HEARTBEAT: Duration = Duration::from_secs(10);
+    let mut child: Option<Child> = None;
+    let mut rx: Option<mpsc::Receiver<Option<u32>>> = None;
+    let mut debounce = presence::Debouncer::default();
+    let mut last_post = Instant::now() - HEARTBEAT;
+    let mut retry_at = Instant::now();
+
+    let post = |present: Option<bool>| {
+        let body = match present {
+            Some(p) => format!(r#"{{"present":{p}}}"#),
+            None => r#"{"present":null}"#.to_string(),
+        };
+        let _ = http::post_json(PORT, "/presence/user", &body);
+    };
+
+    loop {
+        let want = settings.lock().unwrap().camera_presence;
+        if want && child.is_none() && Instant::now() >= retry_at {
+            match presence::spawn() {
+                Ok((c, lines)) => {
+                    let (tx, r) = mpsc::channel();
+                    thread::spawn(move || {
+                        for faces in lines {
+                            if tx.send(faces).is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    child = Some(c);
+                    rx = Some(r);
+                    debounce = presence::Debouncer::default();
+                    println!("[presence] camera on");
+                }
+                Err(err) => {
+                    eprintln!("[presence] {err}");
+                    retry_at = Instant::now() + Duration::from_secs(30);
+                }
+            }
+        }
+        if !want && let Some(mut c) = child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+            rx = None;
+            *user_present.lock().unwrap() = None;
+            post(None);
+            println!("[presence] camera off");
+        }
+        // The helper stopped (permission denied, camera unplugged): back off and forget the state.
+        if let Some(c) = child.as_mut()
+            && matches!(c.try_wait(), Ok(Some(_)))
+        {
+            child = None;
+            rx = None;
+            *user_present.lock().unwrap() = None;
+            post(None);
+            retry_at = Instant::now() + Duration::from_secs(30);
+        }
+
+        let faces = rx
+            .as_ref()
+            .and_then(|r| r.recv_timeout(Duration::from_secs(1)).ok());
+        if rx.is_none() {
+            thread::sleep(Duration::from_secs(1));
+        }
+        if child.is_some() {
+            if let Some(present) = debounce.feed(faces.flatten(), Instant::now()) {
+                *user_present.lock().unwrap() = Some(present);
+                println!(
+                    "[presence] {}",
+                    if present { "at the desk" } else { "away" }
+                );
+                post(Some(present));
+                last_post = Instant::now();
+            } else if last_post.elapsed() >= HEARTBEAT && debounce.present().is_some() {
+                post(debounce.present());
+                last_post = Instant::now();
+            }
+        }
     }
 }

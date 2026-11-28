@@ -107,6 +107,8 @@ interface StoreState extends Derived {
   sttAvailable: boolean;
   /** spoken command in progress */
   listening: 'idle' | 'listening' | 'thinking';
+  /** at the desk? (camera presence via the menu bar app; null = unknown / not watching) */
+  userPresent: boolean | null;
   /** session chosen in the HUD list; cleared automatically when that session disappears */
   pinnedId: string | null;
 
@@ -142,6 +144,7 @@ interface StoreState extends Derived {
   setVoiceLab: (name: string | null) => void;
   setClap: (on: boolean) => void;
   setStt: (on: boolean) => void;
+  setUserPresent: (present: boolean | null) => void;
   setListening: (l: 'idle' | 'listening' | 'thinking') => void;
 }
 
@@ -258,6 +261,7 @@ export const useStore = create<StoreState>((set, get) => {
     commands: [],
     sttAvailable: false,
     listening: 'idle',
+    userPresent: null,
     ...derive({ connected: false, live: [], simSats: [], override: null, pinnedId: null }),
 
     combo: 0,
@@ -332,6 +336,10 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     setListening: (listening) => set({ listening }),
+
+    setUserPresent: (userPresent) => {
+      if (userPresent !== get().userPresent) set({ userPresent });
+    },
 
     setClap: (clapOn) => {
       writePref(PREF_CLAP, clapOn ? 'on' : 'off');

@@ -101,6 +101,20 @@ export function statusReport(sessions: Session[], lang: Lang): string {
   return parts.join(' ');
 }
 
+// ---------------------------------------------------------------- welcome back
+
+/** Coming back to the desk (camera presence): a greeting and what happened meanwhile. */
+export function welcomeBack(whileAway: string[], lang: Lang, max = 3): string {
+  const shown = whileAway.slice(0, max);
+  const more = whileAway.length - shown.length;
+  if (lang === 'ko') {
+    if (!shown.length) return '다시 오셨군요. 자리를 비우신 동안 별일 없었습니다.';
+    return ['다시 오셨군요. 자리를 비우신 동안:', ...shown, more > 0 ? `그 밖에 ${more}건이 더 있습니다.` : ''].filter(Boolean).join(' ');
+  }
+  if (!shown.length) return 'Welcome back, sir. All quiet while you were away.';
+  return ['Welcome back, sir. While you were away:', ...shown, more > 0 ? `And ${more} more.` : ''].filter(Boolean).join(' ');
+}
+
 // ---------------------------------------------------------------- phrasing
 
 function minutes(ms: number, lang: Lang): string | null {

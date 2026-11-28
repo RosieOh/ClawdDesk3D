@@ -82,6 +82,63 @@ describe('derived view', () => {
   });
 });
 
+describe('pinning a session', () => {
+  const snapshot = () => [
+    session('busy', 'GENERATING', 300, { model: 'claude-opus-5-5' }),
+    session('quiet', 'IDLE', 200, { model: 'claude-haiku-5-5' }),
+    session('ended', 'OFFLINE', 100),
+  ];
+
+  it('exposes the shown session and every known session', () => {
+    useStore.getState().setConnected(true);
+    useStore.getState().applySnapshot(snapshot(), 'hook');
+    const s = useStore.getState();
+    expect(s.primary?.id).toBe('busy');
+    expect(s.primary?.model).toBe('claude-opus-5-5');
+    expect(s.sessions.map((x) => x.id)).toEqual(['busy', 'quiet', 'ended']);
+  });
+
+  it('a pinned session becomes the desk, even when another is more recent', () => {
+    useStore.getState().setConnected(true);
+    useStore.getState().applySnapshot(snapshot(), 'hook');
+    useStore.getState().pin('quiet');
+    let s = useStore.getState();
+    expect(s.primaryId).toBe('quiet');
+    expect(s.state).toBe('IDLE');
+    expect(s.satellites.map((x) => x.id)).toEqual(['busy']);
+
+    useStore.getState().pin(null);
+    s = useStore.getState();
+    expect(s.primaryId).toBe('busy');
+  });
+
+  it('switching the shown session is not a new prompt', () => {
+    useStore.getState().setConnected(true);
+    useStore.getState().applySnapshot(snapshot(), 'hook');
+    useStore.getState().pin('quiet');
+    useStore.getState().pin('busy');
+    expect(useStore.getState().combo).toBe(0);
+  });
+
+  it('the pin is released when the session disappears', () => {
+    useStore.getState().setConnected(true);
+    useStore.getState().applySnapshot(snapshot(), 'hook');
+    useStore.getState().pin('quiet');
+    useStore.getState().applySnapshot(snapshot().filter((x) => x.id !== 'quiet'), 'sweep');
+    const s = useStore.getState();
+    expect(s.pinnedId).toBeNull();
+    expect(s.primaryId).toBe('busy');
+  });
+
+  it('simulated satellites can be pinned too', () => {
+    useStore.getState().addSatellite();
+    const sat = useStore.getState().simSats[0];
+    useStore.getState().pin(sat.id);
+    expect(useStore.getState().primary?.id).toBe(sat.id);
+    expect(useStore.getState().satellites.map((x) => x.id)).toEqual(['sim-main']);
+  });
+});
+
 describe('combo', () => {
   it('counts prompts that start from rest within the window', () => {
     live('IDLE');

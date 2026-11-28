@@ -20,7 +20,8 @@
     "hooks:status": "node scripts/hooks.mjs status",
     "voice:setup": "bash voice-lab/setup.sh",
     "voice:record": "voice-lab/.venv/bin/python voice-lab/record.py",
-    "voice:serve": "voice-lab/.venv/bin/python voice-lab/server.py"
+    "voice:serve": "voice-lab/.venv/bin/python voice-lab/server.py",
+    "hue:pair": "node scripts/hue-pair.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.6",

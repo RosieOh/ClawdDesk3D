@@ -380,3 +380,199 @@ impl SessionStore {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const SID: &str = "sess-1";
+
+    struct Harness {
+        store: SessionStore,
+        t: u64,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            Self { store: SessionStore::new(), t: 1_000 }
+        }
+        fn fire_meta(&mut self, event: &str, extra: Value, meta: Meta) -> Session {
+            let mut p = json!({ "session_id": SID, "cwd": "/Users/me/dev/my-app", "hook_event_name": event });
+            if let (Value::Object(base), Value::Object(more)) = (&mut p, extra) {
+                base.extend(more);
+            }
+            self.store.apply(event, &p, &meta, self.t).expect("event should apply")
+        }
+        fn fire(&mut self, event: &str, extra: Value) -> Session {
+            self.fire_meta(event, extra, Meta::default())
+        }
+    }
+
+    use AgentState::*;
+
+    #[test]
+    fn basic_lifecycle() {
+        let mut h = Harness::new();
+        assert_eq!(h.fire("SessionStart", json!({})).state, Idle);
+        let s = h.fire("UserPromptSubmit", json!({}));
+        assert_eq!(s.state, Generating);
+        assert_eq!(s.prompts, 1);
+        assert_eq!(s.project, "my-app");
+        assert_eq!(h.fire("PreToolUse", json!({ "tool_name": "Read", "tool_use_id": "a" })).state, ToolRunning);
+        assert_eq!(h.fire("PostToolUse", json!({ "tool_name": "Read", "tool_use_id": "a" })).state, Generating);
+        assert_eq!(h.fire("Stop", json!({})).state, Idle);
+        assert_eq!(h.fire("SessionEnd", json!({})).state, Offline);
+    }
+
+    #[test]
+    fn parallel_tools_stay_running_until_the_last_one_finishes() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire("PreToolUse", json!({ "tool_name": "Read", "tool_use_id": "a" }));
+        let s = h.fire("PreToolUse", json!({ "tool_name": "Grep", "tool_use_id": "b" }));
+        assert_eq!(s.running, 2);
+        assert_eq!(s.tool.as_deref(), Some("Grep"));
+
+        let s = h.fire("PostToolUse", json!({ "tool_name": "Grep", "tool_use_id": "b" }));
+        assert_eq!(s.state, ToolRunning);
+        assert_eq!(s.tool.as_deref(), Some("Read"));
+        assert_eq!(s.running, 1);
+
+        let s = h.fire("PostToolUseFailure", json!({ "tool_name": "Read", "tool_use_id": "a" }));
+        assert_eq!(s.state, Generating);
+        assert_eq!(s.tool, None);
+        assert_eq!(s.running, 0);
+    }
+
+    #[test]
+    fn tool_events_without_id_match_by_name() {
+        let mut h = Harness::new();
+        h.fire("PreToolUse", json!({ "tool_name": "Bash" }));
+        h.fire("PreToolUse", json!({ "tool_name": "Read" }));
+        let s = h.fire("PostToolUse", json!({ "tool_name": "Bash" }));
+        assert_eq!(s.state, ToolRunning);
+        assert_eq!(s.tool.as_deref(), Some("Read"));
+    }
+
+    #[test]
+    fn pre_tool_use_without_prompt_still_shows_tool() {
+        let mut h = Harness::new();
+        h.fire("SessionStart", json!({}));
+        let s = h.fire("PreToolUse", json!({ "tool_name": "mcp__github__create_issue", "tool_use_id": "x" }));
+        assert_eq!(s.state, ToolRunning);
+        assert_eq!(s.tool.as_deref(), Some("create_issue"));
+    }
+
+    #[test]
+    fn stop_clears_dangling_tools() {
+        // e.g. a denied permission never gets PostToolUse
+        let mut h = Harness::new();
+        h.fire("PreToolUse", json!({ "tool_name": "Bash", "tool_use_id": "a" }));
+        h.fire("Stop", json!({}));
+        assert_eq!(h.fire("UserPromptSubmit", json!({})).state, Generating);
+    }
+
+    #[test]
+    fn permission_notification_waits_and_approval_resumes() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire("PreToolUse", json!({ "tool_name": "Bash", "tool_use_id": "a" }));
+        let s = h.fire(
+            "Notification",
+            json!({ "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash" }),
+        );
+        assert_eq!(s.state, Waiting);
+        assert_eq!(s.tool, None);
+        assert_eq!(h.fire("PostToolUse", json!({ "tool_name": "Bash", "tool_use_id": "a" })).state, Generating);
+    }
+
+    #[test]
+    fn idle_notification_does_not_interrupt_a_turn() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        assert_eq!(h.fire("Notification", json!({ "notification_type": "idle_prompt" })).state, Generating);
+        h.fire("Stop", json!({}));
+        assert_eq!(h.fire("Notification", json!({ "notification_type": "idle_prompt" })).state, Idle);
+    }
+
+    #[test]
+    fn compaction_auto_resumes_manual_idles() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        let s = h.fire("PreCompact", json!({ "trigger": "auto" }));
+        assert_eq!(s.state, ToolRunning);
+        assert_eq!(s.tool.as_deref(), Some("Compact"));
+        assert_eq!(h.fire("SessionStart", json!({ "source": "compact" })).state, Generating);
+
+        h.fire("Stop", json!({}));
+        h.fire("PreCompact", json!({ "trigger": "manual" }));
+        assert_eq!(h.fire("SessionStart", json!({ "source": "compact" })).state, Idle);
+    }
+
+    #[test]
+    fn subagent_stop_is_only_a_heartbeat() {
+        let mut h = Harness::new();
+        h.fire("PreToolUse", json!({ "tool_name": "Task", "tool_use_id": "t" }));
+        h.t += 5_000;
+        let s = h.fire("SubagentStop", json!({}));
+        assert_eq!(s.state, ToolRunning);
+        assert_eq!(s.tool.as_deref(), Some("Task"));
+        assert_eq!(s.last_seen, 6_000);
+    }
+
+    #[test]
+    fn entrypoint_header_normalizes_source() {
+        let mut h = Harness::new();
+        let meta = |e: &str| Meta { entrypoint: Some(e.into()), session_id: None };
+        assert_eq!(h.fire_meta("SessionStart", json!({}), meta("claude-vscode")).source, "vscode");
+        assert_eq!(h.fire_meta("Stop", json!({}), meta("cli")).source, "cli");
+        assert_eq!(h.fire("Stop", json!({})).source, "cli", "missing header keeps the last known source");
+    }
+
+    #[test]
+    fn unknown_events_and_unattributable_payloads_are_ignored() {
+        let mut store = SessionStore::new();
+        let m = Meta::default();
+        assert!(store.apply("Bogus", &json!({ "session_id": SID, "cwd": "/x" }), &m, 0).is_none());
+        assert!(store.apply("Stop", &json!({ "hook_event_name": "Stop" }), &m, 0).is_none());
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn sweep_expires_stale_and_ended_sessions() {
+        let mut h = Harness::new();
+        h.fire("SessionStart", json!({}));
+        h.store.apply("SessionEnd", &json!({ "session_id": "other", "cwd": "/x" }), &Meta::default(), h.t);
+        h.t += OFFLINE_LINGER_MS + 1;
+        let ids: Vec<String> = h.store.sweep(h.t).into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, ["other"]);
+        h.t += STALE_MS;
+        let ids: Vec<String> = h.store.sweep(h.t).into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, [SID]);
+        assert_eq!(h.store.len(), 0);
+    }
+
+    #[test]
+    fn allowed_origins() {
+        let none: [String; 0] = [];
+        assert!(is_allowed_origin(None, &none), "hooks / curl send no Origin");
+        assert!(is_allowed_origin(Some("http://localhost:5173"), &none));
+        assert!(is_allowed_origin(Some("http://127.0.0.1:4173"), &none));
+        assert!(is_allowed_origin(Some("http://[::1]:5173"), &none));
+        assert!(!is_allowed_origin(Some("https://evil.example"), &none));
+        assert!(!is_allowed_origin(Some("http://localhost.evil.example"), &none));
+        assert!(!is_allowed_origin(Some("null"), &none));
+        assert!(!is_allowed_origin(Some("file://"), &none));
+        assert!(is_allowed_origin(Some("https://desk.example"), &["https://desk.example".to_string()]));
+    }
+
+    #[test]
+    fn helpers() {
+        assert_eq!(project_from_cwd("C:\\code\\proj\\"), "proj");
+        assert_eq!(project_from_cwd(""), "unknown");
+        assert_eq!(short_tool_name(None), "Tool");
+        assert!(is_attention_notification(&json!({ "message": "Claude needs your permission to use Bash" })));
+        assert!(!is_attention_notification(&json!({ "message": "Claude is waiting for your input" })));
+        assert_eq!(parse_origin_list(Some(" a, ,b ")), ["a", "b"]);
+    }
+}

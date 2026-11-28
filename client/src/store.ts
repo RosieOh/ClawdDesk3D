@@ -16,6 +16,15 @@ export interface Session {
   prompts?: number;
   startedAt: number;
   lastSeen: number;
+  /** model id, e.g. `claude-opus-5-5` */
+  model?: string | null;
+  /** `default` | `plan` | `acceptEdits` | `auto` | `bypassPermissions` | … */
+  permissionMode?: string | null;
+  gitBranch?: string | null;
+  /** Claude Code version */
+  claudeVersion?: string | null;
+  /** `startup` | `resume` | `clear` */
+  startSource?: string | null;
 }
 
 export const COMBO_WINDOW_MS = 5 * 60 * 1000;
@@ -30,11 +39,17 @@ const SIM_MAIN: Session = {
   tool: null,
   startedAt: 0,
   lastSeen: 0,
+  model: 'claude-opus-5-5',
+  permissionMode: 'default',
+  gitBranch: 'main',
+  startSource: 'startup',
 };
 
 const SIM_PROJECTS = ['api-gateway', 'web-app', 'infra', 'docs-site', 'ml-pipeline', 'mobile'];
 const SIM_STATES: AgentState[] = ['IDLE', 'WAITING', 'GENERATING', 'TOOL_RUNNING'];
 const SIM_TOOLS = ['Read', 'Edit', 'Bash', 'Grep', 'Write'];
+const SIM_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+const SIM_MODES = ['default', 'acceptEdits', 'plan', 'auto'];
 
 interface Derived {
   state: AgentState;
@@ -43,6 +58,10 @@ interface Derived {
   running: number;
   project: string;
   primaryId: string | null;
+  /** the session the desk is showing (pinned, else the most recently active) */
+  primary: Session | null;
+  /** every known session, most recent first (live ones, then simulated satellites) */
+  sessions: Session[];
   satellites: Session[];
   sessionCount: number;
   sources: { vscode: number; cli: number; other: number };
@@ -54,6 +73,8 @@ interface StoreState extends Derived {
   simSats: Session[];
   /** Dock override. In live mode it's cleared by the next real hook event. */
   override: { state: AgentState; tool: string | null } | null;
+  /** session chosen in the HUD list; cleared automatically when that session disappears */
+  pinnedId: string | null;
 
   combo: number;
   lastPromptAt: number;
@@ -66,6 +87,8 @@ interface StoreState extends Derived {
   simulate: (state: AgentState, tool?: string | null) => void;
   addSatellite: () => void;
   clearSatellites: () => void;
+  /** show this session on the desk (null: follow the most recently active one again) */
+  pin: (id: string | null) => void;
   toggleMute: () => void;
 }
 
@@ -74,11 +97,15 @@ const isResting = (s: AgentState) => s === 'IDLE' || s === 'OFFLINE';
 /** Stats track real work only: the simulator demo counts, a manual override on top of live data doesn't. */
 const isReal = (s: Pick<StoreState, 'connected' | 'override'>) => !s.connected || s.override == null;
 
-function derive(s: Pick<StoreState, 'connected' | 'live' | 'simSats' | 'override'>): Derived {
+type DeriveInput = Pick<StoreState, 'connected' | 'live' | 'simSats' | 'override' | 'pinnedId'>;
+
+function derive(s: DeriveInput): Derived {
   const base = s.connected ? s.live : [SIM_MAIN];
   const byRecent = [...base].sort((a, b) => b.lastSeen - a.lastSeen);
   const active = byRecent.filter((x) => x.state !== 'OFFLINE');
-  const primary = active[0] ?? byRecent[0] ?? null;
+  const all = [...byRecent, ...s.simSats];
+  const pinned = s.pinnedId ? (all.find((x) => x.id === s.pinnedId) ?? null) : null;
+  const primary = pinned ?? active[0] ?? byRecent[0] ?? null;
 
   let state: AgentState = primary?.state ?? 'OFFLINE';
   let tool = primary?.tool ?? null;
@@ -89,7 +116,7 @@ function derive(s: Pick<StoreState, 'connected' | 'live' | 'simSats' | 'override
     running = tool ? 1 : 0;
   }
 
-  const satellites = [...active.filter((x) => x.id !== primary?.id), ...s.simSats];
+  const satellites = all.filter((x) => x.state !== 'OFFLINE' && x.id !== primary?.id);
   const sources = { vscode: 0, cli: 0, other: 0 };
   for (const x of s.connected ? active : []) {
     if (x.source === 'vscode') sources.vscode++;
@@ -103,6 +130,8 @@ function derive(s: Pick<StoreState, 'connected' | 'live' | 'simSats' | 'override
     running,
     project: primary?.project ?? '—',
     primaryId: primary?.id ?? null,
+    primary,
+    sessions: all,
     satellites,
     sessionCount: (s.connected ? active.length : 1) + s.simSats.length,
     sources,
@@ -114,6 +143,10 @@ export const useStore = create<StoreState>((set, get) => {
   const commit = (partial: Partial<StoreState>) => {
     const prev = get();
     const next = { ...prev, ...partial };
+    // A pinned session that is gone (swept, or the simulator was reset) releases the pin.
+    if (next.pinnedId && ![...(next.connected ? next.live : [SIM_MAIN]), ...next.simSats].some((x) => x.id === next.pinnedId)) {
+      next.pinnedId = partial.pinnedId = null;
+    }
     const d = derive(next);
     const stats: Partial<StoreState> = {};
 
@@ -121,7 +154,8 @@ export const useStore = create<StoreState>((set, get) => {
     const wasReal = isReal(prev);
     const nowReal = isReal(next);
     // A new prompt = leaving rest. Resuming after a permission prompt (WAITING) is the same turn.
-    if (nowReal && d.state === 'GENERATING' && isResting(prev.state)) {
+    // Switching the shown session isn't a new prompt either.
+    if (nowReal && d.state === 'GENERATING' && isResting(prev.state) && d.primaryId === prev.primaryId) {
       const inWindow = prev.lastPromptAt > 0 && now - prev.lastPromptAt < COMBO_WINDOW_MS;
       stats.combo = inWindow ? prev.combo + 1 : 1;
       stats.lastPromptAt = now;
@@ -142,7 +176,8 @@ export const useStore = create<StoreState>((set, get) => {
     live: [],
     simSats: [],
     override: null,
-    ...derive({ connected: false, live: [], simSats: [], override: null }),
+    pinnedId: null,
+    ...derive({ connected: false, live: [], simSats: [], override: null, pinnedId: null }),
 
     combo: 0,
     lastPromptAt: 0,
@@ -176,11 +211,17 @@ export const useStore = create<StoreState>((set, get) => {
         tool: state === 'TOOL_RUNNING' ? SIM_TOOLS[i % SIM_TOOLS.length] : null,
         startedAt: Date.now(),
         lastSeen: Date.now(),
+        model: SIM_MODELS[i % SIM_MODELS.length],
+        permissionMode: SIM_MODES[i % SIM_MODES.length],
+        gitBranch: i % 2 ? 'main' : `feat/${SIM_PROJECTS[i]}`,
+        startSource: i % 3 ? 'startup' : 'resume',
       };
       commit({ simSats: [...sats, sat] });
     },
 
     clearSatellites: () => commit({ simSats: [] }),
+
+    pin: (pinnedId) => commit({ pinnedId }),
 
     toggleMute: () => {
       const muted = !get().muted;

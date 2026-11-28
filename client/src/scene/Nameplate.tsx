@@ -7,12 +7,15 @@ import { MAT } from './materials';
 import { FONT } from './fonts';
 import { NAMEPLATE_POS } from './layout';
 import { useStore } from '../store';
+import { shortId, sourceLabel } from '../format';
 
 /** Frosted acrylic stand showing the active project (cwd basename) as a hologram. */
 export function Nameplate() {
   const project = useStore((s) => s.project);
   const state = useStore((s) => s.state);
   const tool = useStore((s) => s.tool);
+  const primary = useStore((s) => s.primary);
+  const caption = primary ? `${sourceLabel(primary.source)} · ${shortId(primary.id)}`.toUpperCase() : 'PROJECT / CWD';
   const hex = stateHex(state, tool);
   const holo = useRef<THREE.Group>(null!);
   const edgeMat = useRef<THREE.MeshStandardMaterial>(null!);
@@ -38,7 +41,7 @@ export function Nameplate() {
       <RoundedBox args={[1.5, 0.56, 0.05]} radius={0.02} position={[0, 0.4, 0]} material={MAT.frost} castShadow />
       <group ref={holo} position={[0, 0.4, 0.04]}>
         <Text font={FONT.mono} position={[-0.66, 0.17, 0]} fontSize={0.06} letterSpacing={0.2} anchorX="left" anchorY="middle" color="#ffffff" fillOpacity={0.6}>
-          {'PROJECT / CWD'}
+          {caption}
         </Text>
         <Text font={FONT.sans} position={[0, -0.03, 0]} fontSize={fontSize} maxWidth={1.36} anchorX="center" anchorY="middle" letterSpacing={0.01} color={hex} outlineWidth={0.004} outlineColor="#000000" outlineOpacity={0.3}>
           {project}

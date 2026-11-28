@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::transcript::TranscriptInfo;
+
 /// Drop sessions after 10 min of silence.
 pub const STALE_MS: u64 = 10 * 60 * 1000;
 /// Keep ended sessions visible for 1 min.
@@ -100,6 +102,15 @@ pub struct Session {
     pub prompts: u32,
     pub started_at: u64,
     pub last_seen: u64,
+    /// model id, e.g. `claude-opus-5-5` (payload `model`, else the transcript's latest assistant turn)
+    pub model: Option<String>,
+    /// `default` | `plan` | `acceptEdits` | `auto` | `bypassPermissions` | …
+    pub permission_mode: Option<String>,
+    pub git_branch: Option<String>,
+    /// Claude Code version
+    pub claude_version: Option<String>,
+    /// how the session began: `startup` | `resume` | `clear` (compaction restarts don't overwrite it)
+    pub start_source: Option<String>,
 }
 
 /// Header-derived info that accompanies a hook payload.
@@ -188,6 +199,18 @@ fn field(p: &Value, key: &str) -> Option<String> {
     }
 }
 
+/// `model` as a plain id string, or an object with `id` / `display_name`.
+fn model_of(p: &Value) -> Option<String> {
+    match p.get("model")? {
+        Value::String(m) if !m.is_empty() => Some(m.clone()),
+        Value::Object(o) => ["id", "display_name"]
+            .iter()
+            .find_map(|k| o.get(*k).and_then(Value::as_str).filter(|v| !v.is_empty()))
+            .map(String::from),
+        _ => None,
+    }
+}
+
 /// Notifications that mean "Claude is blocked on the human" rather than "done".
 pub fn is_attention_notification(p: &Value) -> bool {
     if let Some(kind) = field(p, "notification_type") {
@@ -251,6 +274,41 @@ impl SessionStore {
         self.entries.get(id).map(|e| &e.session)
     }
 
+    /// Fill in details read from the session transcript. Hook payload values (model, permission mode) are newer,
+    /// so the transcript only fills the gaps for those; branch and version always come from it.
+    /// Returns whether anything changed.
+    pub fn merge_transcript(&mut self, id: &str, info: TranscriptInfo) -> bool {
+        let Some(e) = self.entries.get_mut(id) else {
+            return false;
+        };
+        let s = &mut e.session;
+        let before = (
+            s.model.clone(),
+            s.permission_mode.clone(),
+            s.git_branch.clone(),
+            s.claude_version.clone(),
+        );
+        if info.model.is_some() {
+            s.model = info.model;
+        }
+        if s.permission_mode.is_none() {
+            s.permission_mode = info.permission_mode;
+        }
+        if info.git_branch.is_some() {
+            s.git_branch = info.git_branch;
+        }
+        if info.version.is_some() {
+            s.claude_version = info.version;
+        }
+        before
+            != (
+                s.model.clone(),
+                s.permission_mode.clone(),
+                s.git_branch.clone(),
+                s.claude_version.clone(),
+            )
+    }
+
     /// Apply one hook event at time `now` (ms). Returns the updated session, or `None` if ignored.
     pub fn apply(
         &mut self,
@@ -282,6 +340,11 @@ impl SessionStore {
                 prompts: 0,
                 started_at: now,
                 last_seen: now,
+                model: None,
+                permission_mode: None,
+                git_branch: None,
+                claude_version: None,
+                start_source: None,
             },
             tools: Vec::new(),
             compacting: None,
@@ -308,6 +371,18 @@ impl SessionStore {
         }
         s.last_seen = now;
         s.last_event = event_name.to_string();
+        if let Some(model) = model_of(payload) {
+            s.model = Some(model);
+        }
+        if let Some(mode) = field(payload, "permission_mode") {
+            s.permission_mode = Some(mode);
+        }
+        if event == Event::SessionStart {
+            match field(payload, "source") {
+                Some(src) if src != "compact" => s.start_source = Some(src),
+                _ => {}
+            }
+        }
 
         match event {
             Event::SessionStart => {
@@ -811,6 +886,72 @@ mod tests {
             Some("https://desk.example"),
             &["https://desk.example".to_string()]
         ));
+    }
+
+    #[test]
+    fn session_details_come_from_the_payload() {
+        let mut h = Harness::new();
+        let s = h.fire(
+            "SessionStart",
+            json!({ "source": "resume", "model": "claude-opus-5-5", "permission_mode": "plan" }),
+        );
+        assert_eq!(s.start_source.as_deref(), Some("resume"));
+        assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(s.permission_mode.as_deref(), Some("plan"));
+
+        let s = h.fire(
+            "UserPromptSubmit",
+            json!({ "permission_mode": "acceptEdits" }),
+        );
+        assert_eq!(s.permission_mode.as_deref(), Some("acceptEdits"));
+        assert_eq!(
+            s.model.as_deref(),
+            Some("claude-opus-5-5"),
+            "kept when absent"
+        );
+
+        let s = h.fire("SessionStart", json!({ "source": "compact" }));
+        assert_eq!(
+            s.start_source.as_deref(),
+            Some("resume"),
+            "compaction restart keeps how it began"
+        );
+
+        let s = h.fire(
+            "Stop",
+            json!({ "model": { "id": "claude-sonnet-5-5", "display_name": "Sonnet 5.5" } }),
+        );
+        assert_eq!(s.model.as_deref(), Some("claude-sonnet-5-5"));
+    }
+
+    #[test]
+    fn transcript_fills_gaps_without_overriding_newer_payload_values() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({ "permission_mode": "auto" }));
+        let changed = h.store.merge_transcript(
+            SID,
+            TranscriptInfo {
+                model: Some("claude-opus-5-5".into()),
+                git_branch: Some("main".into()),
+                version: Some("2.1.332".into()),
+                permission_mode: Some("default".into()),
+            },
+        );
+        assert!(changed);
+        let s = h.store.get(SID).unwrap();
+        assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(s.git_branch.as_deref(), Some("main"));
+        assert_eq!(s.claude_version.as_deref(), Some("2.1.332"));
+        assert_eq!(
+            s.permission_mode.as_deref(),
+            Some("auto"),
+            "payload value is newer"
+        );
+        assert!(
+            !h.store.merge_transcript(SID, TranscriptInfo::default()),
+            "nothing new"
+        );
+        assert!(!h.store.merge_transcript("nope", TranscriptInfo::default()));
     }
 
     #[test]

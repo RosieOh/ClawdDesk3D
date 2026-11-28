@@ -14,6 +14,12 @@ Claude Code ──hooks (HTTP POST)──▶ bridge :3001 (Rust, axum) ──Web
 | `GENERATING` | `UserPromptSubmit`, `PostToolUse(Failure)` (last tool done), `ElicitationResult`, `PostCompact` after auto-compaction | counter-spinning gyroscope, bloom, token fountain, keyboard clacking |
 | `TOOL_RUNNING` | `PreToolUse` (stays until *every* parallel tool is done), `PreCompact` | cyan (emerald for Edit/Write) laser scanning the code cube, rack LEDs, tool badge (`Bash +1` when several run) |
 
+## Which session is on the desk
+
+The HUD shows the Claude Code session the desk is following: short session id (click to copy the full id, e.g. for `claude --resume`), entrypoint (CLI / VS Code), model, permission mode, git branch, how it began (new / resumed / cleared) and the Claude Code version. The model, branch and version come from the last 64 kB of the session transcript (only `.jsonl` files under `~/.claude` or `$CLAUDE_CONFIG_DIR` are read); the rest comes from the hook payloads.
+
+With several sessions open, the stats panel lists them all. The desk follows the most recently active one; click a session to pin it, click again (or **unpin**) to go back to following. A pin is released when its session ends and disappears.
+
 ## Run
 
 Requires Node.js and a Rust toolchain ([rustup](https://rustup.rs)).

@@ -53,6 +53,29 @@ Recorded clips can replace the synthesized voice for each kind of announcement. 
 
 Paths are relative to the pack folder (a symlink inside it to wherever the files live works). Several clips per kind are picked at random without repeating the last one; a kind with no clips falls back to the synthesized voice; the caption always shows the full sentence. WAV, MP3, OGG, M4A/AAC, FLAC and WebM are accepted (not WMA). When a pack is installed, the voice button shows its name; the core glows with the clip's loudness.
 
+### Your own voice (voice lab)
+
+The desk can speak with a voice cloned from **your own recording**: F5-TTS running locally on Apple Silicon (MLX), zero-shot from a ~10 s reference clip, no training run. Use your own voice or that of someone who agreed to it; don't clone people who haven't.
+
+```bash
+npm run voice:setup     # once: Python 3.12 env in voice-lab/.venv (~2-3 GB incl. the model on first start)
+npm run voice:record    # read one sentence; saves voice-lab/my-voice/reference.wav + reference.txt
+npm run voice:serve     # http://127.0.0.1:3003, keep it running next to npm run dev
+```
+
+The page picks the lab up within ~15 s (the voice button turns into **MY VOICE**) and uses it for English lines; Korean keeps the system voice (the model speaks English and Chinese). A short line takes ~1.5-3 s to generate the first time on an M-series Mac, then comes from the cache in `voice-lab/cache/`. `--steps` / `--method` trade quality for speed (default: euler, 16 steps). The server answers only loopback pages and runs everything on one worker thread. `voice-lab/my-voice/`, `voice-lab/cache/` and `voice-lab/.venv/` are gitignored. Model weights are CC-BY-NC: fine for personal use, not for commercial use.
+
+Priority when speaking: a voice-pack clip for that moment → your cloned voice (English) → the browser's voice.
+
+## Double clap
+
+Press **C** (or **👏**) to let the page listen to the microphone. Then a **double clap**:
+
+- while the voice is off: wakes JARVIS (voice on, "At your service, sir.")
+- while it is on: a status report ("Sir, 3 sessions are online. web-app is waiting for your approval. api is working.")
+
+Detection runs in an AudioWorklet (so it also works with the tab in the background) on the raw signal: a clap is a sharp peak well above the room's noise floor that dies away within ~80 ms; two of them 150-700 ms apart make a double clap, so talking, music or a single knock don't trigger it. Audio never leaves the browser and nothing is recorded. The setting is remembered; the browser asks for microphone access once.
+
 ## Which session is on the desk
 
 The HUD shows the Claude Code session the desk is following: short session id (click to copy the full id, e.g. for `claude --resume`), entrypoint (CLI / VS Code), model, permission mode, git branch, how it began (new / resumed / cleared) and the Claude Code version. The model, branch and version come from the last 64 kB of the session transcript (only `.jsonl` files under `~/.claude` or `$CLAUDE_CONFIG_DIR` are read); the rest comes from the hook payloads.
@@ -148,6 +171,9 @@ hooks/                   settings.json snippet
 scripts/hooks.mjs        hook installer / uninstaller (+ hooks.test.mjs)
 scripts/dev-bridge.mjs   dev runner: rebuild + restart the bridge on change
 scripts/test-hooks.sh    fake session lifecycle
+voice-lab/               local voice cloning server (F5-TTS / MLX) + reference recorder
+client/src/voice/        announcer, speech engines (browser, voice pack, voice lab), captions
+client/src/sensors/      double-clap detector (AudioWorklet + pure detector)
 .github/workflows/ci.yml CI: rustfmt, clippy, cargo test, client typecheck/tests/build
 ```
 

@@ -5,6 +5,13 @@ import { decodeResponse, enqueue } from './player';
 
 const LAB_URL: string = (import.meta.env.VITE_VOICE_LAB_URL as string | undefined) ?? 'http://127.0.0.1:3003';
 
+/** Transcribe a recorded command (16 kHz WAV) with the voice lab's Whisper. */
+export async function transcribe(wav: Blob): Promise<{ text: string; language: string | null }> {
+  const res = await fetch(`${LAB_URL}/transcribe`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
+  if (!res.ok) throw new Error(`transcription failed (${res.status})`);
+  return (await res.json()) as { text: string; language: string | null };
+}
+
 /** Queue a line in the cloned voice. `fallback` runs if generation or playback fails. */
 export function speakLab(text: string, fallback: () => void) {
   enqueue(

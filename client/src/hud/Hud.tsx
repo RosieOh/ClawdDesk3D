@@ -5,6 +5,7 @@ import { branchLabel, permissionMode, prettyModel, shortId, sourceLabel, startLa
 import { STATE_HEX, stateHex } from '../scene/mix';
 import { playUiClick } from '../audio';
 import { cycleVoiceLang, toggleVoice } from '../voice/controls';
+import { listenForCommand } from '../voice/assistant';
 import { speech, speechSupported } from '../voice/speech';
 
 const glass = 'bg-white/[0.07] backdrop-blur-md border border-white/[0.12] shadow-[0_8px_32px_rgba(0,0,0,0.35)] rounded-2xl';
@@ -225,6 +226,8 @@ function StatsPanel() {
   const voiceLab = useStore((s) => s.voiceLab);
   const clapOn = useStore((s) => s.clapOn);
   const setClap = useStore((s) => s.setClap);
+  const sttAvailable = useStore((s) => s.sttAvailable);
+  const listening = useStore((s) => s.listening);
   const canSpeak = speechSupported();
   const canListen = typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
   const engineName = voicePack ?? (voiceLab && voiceLang === 'en' ? 'my voice' : null);
@@ -266,6 +269,21 @@ function StatsPanel() {
               >
                 {voiceOn ? '🗣' : '🤐'} {engineName ? engineName.toUpperCase() : 'VOICE'}
               </button>
+              {canListen && sttAvailable && (
+                <button
+                  onClick={() => void listenForCommand(false)}
+                  className={`rounded-lg border px-2 py-1 font-mono text-[10px] tracking-wider ${
+                    listening !== 'idle'
+                      ? 'animate-pulse border-sky-300/50 bg-sky-300/20 text-sky-100'
+                      : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
+                  }`}
+                  title="Speak a command (Space). Say “status”, or ask Claude to do something in the session shown on the desk."
+                  data-testid="talk"
+                >
+                  {listening === 'thinking' ? '… ' : '🎙 '}
+                  {listening === 'listening' ? 'STOP' : 'TALK'}
+                </button>
+              )}
               {canListen && (
                 <button
                   onClick={() => setClap(!clapOn)}
@@ -541,7 +559,7 @@ export function Hud() {
       </div>
       <div className="flex flex-col items-center gap-2">
         <Caption />
-        <div className="hidden font-mono text-[10px] tracking-widest text-white/30 sm:block">DRAG TO ORBIT · SCROLL TO ZOOM · 1–7 TO PLAY · M SOUND · V VOICE · C CLAP</div>
+        <div className="hidden font-mono text-[10px] tracking-widest text-white/30 sm:block">DRAG TO ORBIT · SCROLL TO ZOOM · 1–7 TO PLAY · M SOUND · V VOICE · C CLAP · SPACE TALK</div>
         <Dock />
       </div>
     </div>

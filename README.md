@@ -31,6 +31,15 @@ npm run app:install     # build ClawdDesk.app and copy it to ~/Applications (ope
 
 Built with Tauri 2 (no Xcode needed, just the Command Line Tools). The bundle is ad-hoc signed for this Mac.
 
+### Camera presence
+
+Turn on **Camera Presence** in the menu bar app and it watches whether you're at the desk, using Apple's Vision face detector on this Mac (one frame a second, nothing stored or sent; the camera light is on only while this is on). After 20 s without a face you count as away:
+
+- the desk stops holding permission requests (nobody is there to answer), and notifications go out even with the desk window open;
+- spoken announcements are kept instead of spoken; when you come back JARVIS says "Welcome back, sir. While you were away: …" with what happened.
+
+The detector is a small Swift helper bundled inside the app (`clawddesk-presence`, built by `desktop/build.rs`); macOS asks once for camera access for ClawdDesk.
+
 ## Approve from the desk
 
 When Claude Code asks for permission (a `PermissionRequest`), the desk shows a card with the project, the tool and what it wants to do (the command, file or URL), a countdown and **Approve / Deny**. The answer goes straight back to Claude Code, which then runs the tool or carries on without it.

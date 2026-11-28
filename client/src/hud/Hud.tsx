@@ -3,6 +3,8 @@ import { COMBO_WINDOW_MS, MAX_SIM_SATELLITES, useStore, type AgentState, type Se
 import { branchLabel, permissionMode, prettyModel, shortId, sourceLabel, startLabel } from '../format';
 import { STATE_HEX, stateHex } from '../scene/mix';
 import { playUiClick } from '../audio';
+import { cycleVoiceLang, toggleVoice } from '../voice/controls';
+import { speech, speechSupported } from '../voice/speech';
 
 const glass = 'bg-white/[0.07] backdrop-blur-md border border-white/[0.12] shadow-[0_8px_32px_rgba(0,0,0,0.35)] rounded-2xl';
 
@@ -216,6 +218,9 @@ function StatsPanel() {
   const lastPromptAt = useStore((s) => s.lastPromptAt);
   const muted = useStore((s) => s.muted);
   const toggleMute = useStore((s) => s.toggleMute);
+  const voiceOn = useStore((s) => s.voiceOn);
+  const voiceLang = useStore((s) => s.voiceLang);
+  const canSpeak = speechSupported();
 
   const focus = focusAccum + (focusSince ? now - focusSince : 0);
   const comboLive = lastPromptAt > 0 && now - lastPromptAt < COMBO_WINDOW_MS ? combo : 0;
@@ -228,13 +233,36 @@ function StatsPanel() {
           <Label>Sessions</Label>
           <div className="mt-0.5 font-mono text-2xl font-bold text-white">{count}</div>
         </div>
-        <button
-          onClick={toggleMute}
-          className="rounded-lg border border-white/15 bg-white/5 px-2 py-1 font-mono text-[10px] tracking-wider text-white/70 hover:bg-white/10"
-          title="Toggle sound (M)"
-        >
-          {muted ? '🔇 MUTED' : '🔊 SOUND'}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            onClick={toggleMute}
+            className="rounded-lg border border-white/15 bg-white/5 px-2 py-1 font-mono text-[10px] tracking-wider text-white/70 hover:bg-white/10"
+            title="Toggle sound effects (M)"
+          >
+            {muted ? '🔇 MUTED' : '🔊 SOUND'}
+          </button>
+          {canSpeak && (
+            <div className="flex gap-1">
+              <button
+                onClick={toggleVoice}
+                className={`rounded-lg border px-2 py-1 font-mono text-[10px] tracking-wider ${
+                  voiceOn ? 'border-sky-300/40 bg-sky-300/15 text-sky-200' : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
+                }`}
+                title="Spoken announcements (V)"
+                data-testid="voice-toggle"
+              >
+                {voiceOn ? '🗣 VOICE' : '🤐 VOICE'}
+              </button>
+              <button
+                onClick={cycleVoiceLang}
+                className="rounded-lg border border-white/15 bg-white/5 px-1.5 py-1 font-mono text-[10px] tracking-wider text-white/70 hover:bg-white/10"
+                title="Voice language"
+              >
+                {voiceLang.toUpperCase()}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       <div className="mt-1 font-mono text-[11px] text-white/55">
         {connected ? (
@@ -351,6 +379,54 @@ function Dock() {
   );
 }
 
+const CAPTION_MS = 6_000;
+
+/** Subtitle for the latest announcement: always shown, spoken or not. */
+function Caption() {
+  const caption = useStore((s) => s.caption);
+  const voiceOn = useStore((s) => s.voiceOn);
+  const [visible, setVisible] = useState(false);
+  const [talking, setTalking] = useState(false);
+
+  useEffect(() => {
+    if (!caption) return;
+    setVisible(true);
+    const id = window.setTimeout(() => setVisible(false), CAPTION_MS);
+    return () => window.clearTimeout(id);
+  }, [caption]);
+
+  // Mirror the speech engine's state for the equaliser bars (cheap poll; the engine has no React binding).
+  useEffect(() => {
+    if (!visible) return;
+    const id = window.setInterval(() => setTalking(speech.speaking > 0), 120);
+    return () => window.clearInterval(id);
+  }, [visible]);
+
+  if (!caption) return null;
+  return (
+    <div
+      className={`${glass} pointer-events-none flex max-w-[min(560px,calc(100vw-32px))] items-center gap-2.5 px-3.5 py-2 transition-all duration-500 ${
+        visible ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
+      }`}
+      role="status"
+      aria-live="polite"
+      data-testid="caption"
+    >
+      <span className="flex h-3 items-end gap-[2px]" aria-hidden>
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className={`w-[3px] rounded-sm bg-sky-300 ${talking && voiceOn ? 'animate-pulse' : ''}`}
+            style={{ height: talking && voiceOn ? `${[60, 100, 75][i]}%` : '35%', animationDelay: `${i * 120}ms` }}
+          />
+        ))}
+      </span>
+      <span className="font-mono text-[10px] font-bold tracking-[0.2em] text-sky-200/80">JARVIS</span>
+      <span className="text-[13px] text-white/90">{caption.text}</span>
+    </div>
+  );
+}
+
 export function Hud() {
   return (
     <div className="pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-4">
@@ -359,7 +435,8 @@ export function Hud() {
         <StatsPanel />
       </div>
       <div className="flex flex-col items-center gap-2">
-        <div className="hidden font-mono text-[10px] tracking-widest text-white/30 sm:block">DRAG TO ORBIT · SCROLL TO ZOOM · 1–7 TO PLAY · M TO MUTE</div>
+        <Caption />
+        <div className="hidden font-mono text-[10px] tracking-widest text-white/30 sm:block">DRAG TO ORBIT · SCROLL TO ZOOM · 1–7 TO PLAY · M SOUND · V VOICE</div>
         <Dock />
       </div>
     </div>

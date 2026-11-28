@@ -14,6 +14,21 @@ Claude Code ──hooks (HTTP POST)──▶ bridge :3001 (Rust, axum) ──Web
 | `GENERATING` | `UserPromptSubmit`, `PostToolUse(Failure)` (last tool done), `ElicitationResult`, `PostCompact` after auto-compaction | counter-spinning gyroscope, bloom, token fountain, keyboard clacking |
 | `TOOL_RUNNING` | `PreToolUse` (stays until *every* parallel tool is done), `PreCompact` | cyan (emerald for Edit/Write) laser scanning the code cube, rack LEDs, tool badge (`Bash +1` when several run) |
 
+## JARVIS voice
+
+Press **V** (or the **VOICE** button) and the desk talks, in English with a calm British butler voice by default (**EN/KO** switches to Korean):
+
+| When | Says |
+|---|---|
+| a turn that took 15 s or more finishes | "Task complete, sir. It took 3 minutes." |
+| Claude asks for permission / input | "Sir, I need your authorization to run Bash." |
+| a turn stops with an error (`StopFailure`) | "I'm afraid the task has stopped with an error, sir." |
+| a new session comes online | "web-app is online, sir." |
+
+With several sessions open, the project is named ("Sir, web-app requires your authorization…"). Every line also appears as a subtitle above the dock, voice on or off, and the core glows in time with the words while it speaks. Quick replies stay silent; dock buttons announce immediately, so the simulator can demo it.
+
+It uses the browser's built-in speech (Web Speech API), so nothing to install. Voice preference: Jamie, then Daniel (British English), downloadable **Premium / Enhanced** versions first when present: on macOS add them under System Settings › Accessibility › Spoken Content › System voice › Manage Voices. Browsers only allow speech after a click or key press, so after a reload the first interaction re-enables it. Voice on/off and language are remembered per browser.
+
 ## Which session is on the desk
 
 The HUD shows the Claude Code session the desk is following: short session id (click to copy the full id, e.g. for `claude --resume`), entrypoint (CLI / VS Code), model, permission mode, git branch, how it began (new / resumed / cleared) and the Claude Code version. The model, branch and version come from the last 64 kB of the session transcript (only `.jsonl` files under `~/.claude` or `$CLAUDE_CONFIG_DIR` are read); the rest comes from the hook payloads.

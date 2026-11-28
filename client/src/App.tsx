@@ -4,6 +4,8 @@ import { Hud } from './hud/Hud';
 import { connectBridge } from './bridge';
 import { useStore } from './store';
 import { playTransition } from './audio';
+import { useJarvisVoice } from './voice/useJarvisVoice';
+import { toggleVoice } from './voice/controls';
 
 export default function App() {
   // Live hook bridge (falls back to simulator mode while disconnected)
@@ -18,11 +20,16 @@ export default function App() {
     [],
   );
 
-  // M toggles sound
+  // Spoken announcements + captions
+  useJarvisVoice();
+
+  // M toggles sound effects, V toggles the voice
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'm' || e.metaKey || e.ctrlKey) return;
-      useStore.getState().toggleMute();
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'm') useStore.getState().toggleMute();
+      else if (k === 'v') toggleVoice();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

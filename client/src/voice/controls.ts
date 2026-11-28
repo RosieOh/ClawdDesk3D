@@ -2,9 +2,9 @@
 
 import { useStore } from '../store';
 import type { Lang } from './announcer';
-import { hush, speak, unlockSpeech } from './speech';
-import { playClip, stopClips, unlockClips } from './voicepack';
-import { voicePack } from './useJarvisVoice';
+import { engines, sayLine } from './say';
+import { hush, unlockSpeech } from './speech';
+import { stopClips, unlockClips } from './voicepack';
 
 const GREETING: Record<Lang, string> = { ko: '음성 안내를 시작합니다.', en: 'At your service, sir.' };
 
@@ -15,7 +15,7 @@ export function toggleVoice() {
   if (on) {
     unlockSpeech();
     unlockClips();
-    if (!playClip(voicePack, 'greeting')) speak(GREETING[s.voiceLang], s.voiceLang);
+    sayLine('greeting', GREETING[s.voiceLang], s.voiceLang);
     s.setCaption(GREETING[s.voiceLang]);
   } else {
     hush();
@@ -30,7 +30,7 @@ export function cycleVoiceLang() {
   if (s.voiceOn) {
     hush();
     // The pack's recordings don't change with the language; only synthesized lines do.
-    if (!voicePack) speak(GREETING[lang], lang);
+    if (!engines.pack) sayLine(null, GREETING[lang], lang);
     s.setCaption(GREETING[lang]);
   }
 }

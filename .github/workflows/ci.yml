@@ -46,3 +46,5 @@ jobs:
       - run: npm test -w client
       - run: npm run build -w client
       - run: bash -n scripts/test-hooks.sh
+      - run: bash -n voice-lab/setup.sh
+      - run: python3 -m py_compile voice-lab/server.py voice-lab/record.py

@@ -74,6 +74,33 @@ export class Announcer {
   }
 }
 
+// ---------------------------------------------------------------- status report
+
+const joinNames = (names: string[], lang: Lang) =>
+  names.length <= 1 ? (names[0] ?? '') : lang === 'ko' ? names.join(', ') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+/** What JARVIS answers when asked for a status (double clap while awake). */
+export function statusReport(sessions: Session[], lang: Lang): string {
+  const live = sessions.filter((s) => s.state !== 'OFFLINE');
+  const waiting = live.filter((s) => s.state === 'WAITING').map((s) => s.project);
+  const working = live.filter((s) => s.state === 'GENERATING' || s.state === 'TOOL_RUNNING').map((s) => s.project);
+  const n = live.length;
+  if (lang === 'ko') {
+    if (n === 0) return '지금 실행 중인 세션이 없습니다.';
+    const parts = [`세션 ${n}개가 연결되어 있습니다.`];
+    if (waiting.length) parts.push(`${joinNames(waiting, lang)}에서 승인을 기다리고 있습니다.`);
+    if (working.length) parts.push(`${joinNames(working, lang)} 작업 중입니다.`);
+    if (!waiting.length && !working.length) parts.push('모두 대기 중입니다.');
+    return parts.join(' ');
+  }
+  if (n === 0) return 'All quiet, sir. No sessions are running.';
+  const parts = [`Sir, ${n} session${n === 1 ?' is' : 's are'} online.`];
+  if (waiting.length) parts.push(`${joinNames(waiting, lang)} ${waiting.length === 1 ? 'is' : 'are'} waiting for your approval.`);
+  if (working.length) parts.push(`${joinNames(working, lang)} ${working.length === 1 ? 'is' : 'are'} working.`);
+  if (!waiting.length && !working.length) parts.push(n === 1 ? 'It is standing by.' : 'All are standing by.');
+  return parts.join(' ');
+}
+
 // ---------------------------------------------------------------- phrasing
 
 function minutes(ms: number, lang: Lang): string | null {

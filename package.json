@@ -15,7 +15,10 @@
     "test:hooks": "bash scripts/test-hooks.sh",
     "hooks:install": "node scripts/hooks.mjs install",
     "hooks:uninstall": "node scripts/hooks.mjs uninstall",
-    "hooks:status": "node scripts/hooks.mjs status"
+    "hooks:status": "node scripts/hooks.mjs status",
+    "voice:setup": "bash voice-lab/setup.sh",
+    "voice:record": "voice-lab/.venv/bin/python voice-lab/record.py",
+    "voice:serve": "voice-lab/.venv/bin/python voice-lab/server.py"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Menu bar app: no Dock icon. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>ClawdDesk listens for a double clap to wake JARVIS. Audio is analysed on this Mac and never recorded.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>ClawdDesk can greet you when you come back to your desk. Video is analysed on this Mac and never recorded.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>ClawdDesk can take spoken commands. Speech is processed on this Mac.</string>
+</dict>
+</plist>

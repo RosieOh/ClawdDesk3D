@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { COMBO_WINDOW_MS, MAX_SIM_SATELLITES, useStore, type AgentState } from '../store';
+import { COMBO_WINDOW_MS, MAX_SIM_SATELLITES, useStore, type AgentState, type Session } from '../store';
+import { branchLabel, permissionMode, prettyModel, shortId, sourceLabel, startLabel } from '../format';
 import { STATE_HEX, stateHex } from '../scene/mix';
 import { playUiClick } from '../audio';
 
@@ -33,6 +34,78 @@ function Label({ children }: { children: ReactNode }) {
   return <div className="text-[10px] font-mono tracking-[0.18em] text-white/45 uppercase">{children}</div>;
 }
 
+function Chip({ children, color, title }: { children: ReactNode; color?: string; title?: string }) {
+  return (
+    <span
+      className="inline-flex items-center rounded-md border px-1.5 py-px font-mono text-[10px] leading-4"
+      style={{ color: color ?? 'rgba(255,255,255,0.6)', borderColor: color ? `${color}55` : 'rgba(255,255,255,0.12)', background: color ? `${color}14` : 'transparent' }}
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Which Claude Code session the desk is showing: id (click to copy), entrypoint, model, mode, branch. */
+function SessionInfo({ session, pinned }: { session: Session; pinned: boolean }) {
+  const pin = useStore((s) => s.pin);
+  const [copied, setCopied] = useState(false);
+  const model = prettyModel(session.model);
+  const mode = permissionMode(session.permissionMode);
+  const branch = branchLabel(session.gitBranch);
+  const start = startLabel(session.startSource);
+
+  const copy = () => {
+    navigator.clipboard?.writeText(session.id).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      },
+      () => {},
+    );
+  };
+
+  return (
+    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-2.5" data-testid="session-info">
+      <div className="flex items-center justify-between gap-2">
+        <Label>Session{pinned ? ' · pinned' : ''}</Label>
+        {pinned && (
+          <button onClick={() => pin(null)} className="font-mono text-[10px] text-white/50 hover:text-white/90" title="Follow the most recently active session again">
+            unpin ✕
+          </button>
+        )}
+      </div>
+      <div className="mt-1 flex min-w-0 items-center gap-1.5 font-mono text-[13px]">
+        <button onClick={copy} className="text-white/90 hover:text-white" title={`${session.id}\nclick to copy (claude --resume <id>)`}>
+          {copied ? 'copied ✓' : shortId(session.id)}
+        </button>
+        <span className="text-white/30">·</span>
+        <span className="text-white/70">{sourceLabel(session.source)}</span>
+        {model && (
+          <>
+            <span className="text-white/30">·</span>
+            <span className="truncate font-semibold text-white/90" title={session.model ?? undefined}>
+              {model}
+            </span>
+          </>
+        )}
+      </div>
+      {(mode || branch || start || session.claudeVersion) && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {mode && (
+            <Chip color={mode.color} title={`permission mode: ${session.permissionMode}`}>
+              {mode.label}
+            </Chip>
+          )}
+          {branch && <Chip title="git branch">⎇ {branch}</Chip>}
+          {start && <Chip title="how the session began">{start}</Chip>}
+          {session.claudeVersion && <Chip title="Claude Code version">v{session.claudeVersion}</Chip>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusPanel() {
   const connected = useStore((s) => s.connected);
   const state = useStore((s) => s.state);
@@ -40,6 +113,8 @@ function StatusPanel() {
   const running = useStore((s) => s.running);
   const project = useStore((s) => s.project);
   const overridden = useStore((s) => s.override != null);
+  const primary = useStore((s) => s.primary);
+  const pinned = useStore((s) => s.pinnedId != null);
   const color = stateHex(state, tool);
 
   return (
@@ -67,6 +142,8 @@ function StatusPanel() {
         </div>
       </div>
 
+      {primary && <SessionInfo session={primary} pinned={pinned} />}
+
       <div className="mt-3 grid grid-cols-[1fr_auto] items-end gap-3">
         <div className="min-w-0">
           <Label>Project</Label>
@@ -89,6 +166,45 @@ function StatusPanel() {
   );
 }
 
+/** Every known session; click one to pin it to the desk, click it again to unpin. */
+function SessionList() {
+  const sessions = useStore((s) => s.sessions);
+  const primaryId = useStore((s) => s.primaryId);
+  const pinnedId = useStore((s) => s.pinnedId);
+  const pin = useStore((s) => s.pin);
+  if (sessions.length < 2) return null;
+
+  return (
+    <div className="mt-3 max-h-48 space-y-1 overflow-y-auto pr-0.5" data-testid="session-list">
+      {sessions.map((x) => {
+        const shown = x.id === primaryId;
+        const model = prettyModel(x.model);
+        return (
+          <button
+            key={x.id}
+            onClick={() => {
+              playUiClick();
+              pin(pinnedId === x.id ? null : x.id);
+            }}
+            className={`block w-full rounded-lg px-2 py-1.5 text-left transition-colors ${shown ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5'}`}
+            title={`${x.id}\n${x.cwd}\n${pinnedId === x.id ? 'click to unpin' : 'click to show on the desk'}`}
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: stateHex(x.state, x.tool) }} />
+              <span className={`truncate font-mono text-[11px] ${x.state === 'OFFLINE' ? 'text-white/40' : 'text-white/90'}`}>{x.project}</span>
+              {pinnedId === x.id && <span className="ml-auto text-[10px]">📌</span>}
+            </div>
+            <div className="mt-0.5 truncate pl-3 font-mono text-[10px] text-white/45">
+              {shortId(x.id)} · {sourceLabel(x.source)}
+              {model ? ` · ${model}` : ''}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function StatsPanel() {
   const now = useNow();
   const count = useStore((s) => s.sessionCount);
@@ -106,7 +222,7 @@ function StatsPanel() {
   const comboLeft = comboLive ? 1 - (now - lastPromptAt) / COMBO_WINDOW_MS : 0;
 
   return (
-    <div className={`${glass} p-4 w-[min(240px,calc(100vw-32px))] pointer-events-auto`}>
+    <div className={`${glass} p-4 w-[min(260px,calc(100vw-32px))] pointer-events-auto`}>
       <div className="flex items-start justify-between">
         <div>
           <Label>Sessions</Label>
@@ -147,6 +263,7 @@ function StatsPanel() {
       <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/10">
         <div className="h-full rounded-full bg-gradient-to-r from-amber-300 to-orange-500 transition-[width] duration-1000" style={{ width: `${comboLeft * 100}%` }} />
       </div>
+      <SessionList />
     </div>
   );
 }

@@ -306,6 +306,7 @@ fn refresh_menu(app: &AppHandle, tray: &TrayIcon, view: &View, settings: &Settin
 fn watch(app: AppHandle, settings: Arc<Mutex<Settings>>, user_present: Arc<Mutex<Option<bool>>>) {
     let mut last_signature = String::new();
     let mut seen_approvals: HashSet<String> = HashSet::new();
+    let mut seen_alerts: HashSet<String> = HashSet::new();
     let mut turns: HashMap<String, Instant> = HashMap::new();
     let mut last_presence: Option<Instant> = None;
     let mut first = true;
@@ -355,6 +356,14 @@ fn watch(app: AppHandle, settings: Arc<Mutex<Settings>>, user_present: Arc<Mutex
             }
         }
         seen_approvals.retain(|id| view.approvals.iter().any(|a| &a.id == id));
+
+        // GitHub alerts (failing CI on your PRs, reviews requested): the first list is old news.
+        for a in &view.alerts {
+            if seen_alerts.insert(a.id.clone()) && !first && !quiet {
+                let (title, body) = a.notification();
+                notify(&app, &title, &body);
+            }
+        }
 
         for s in &view.sessions {
             let working = matches!(s.state.as_str(), "GENERATING" | "TOOL_RUNNING" | "WAITING");

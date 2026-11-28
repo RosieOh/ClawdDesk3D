@@ -33,3 +33,16 @@ describe('labels', () => {
     expect(branchLabel('feat/x')).toBe('feat/x');
   });
 });
+
+describe('tokens', () => {
+  it('formats counts compactly', async () => {
+    const { formatTokens, tokenLine } = await import('./format');
+    expect(formatTokens(950)).toBe('950');
+    expect(formatTokens(1234)).toBe('1.2k');
+    expect(formatTokens(12_345)).toBe('12k');
+    expect(formatTokens(4_200_000)).toBe('4.2M');
+    expect(formatTokens(129_676_481)).toBe('130M');
+    expect(tokenLine({ input: 716, output: 497_063, cacheRead: 129_676_481, cacheWrite: 951_155 })).toBe('↑952k ↓497k · cache 130M');
+    expect(tokenLine(null)).toBeNull();
+  });
+});

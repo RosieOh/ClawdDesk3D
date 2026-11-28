@@ -132,6 +132,8 @@ The HUD shows the Claude Code session the desk is following: short session id (c
 
 With several sessions open, the stats panel lists them all. The desk follows the most recently active one; click a session to pin it, click again (or **unpin**) to go back to following. A pin is released when its session ends and disappears.
 
+
+The session panel also shows **token totals** for the session (↑ fresh input incl. cache writes, ↓ output, cache reads), summed from the transcript at each turn's end (no cost estimate: prices change and differ per plan). While a tool runs, its **command, file or URL** is shown under the tool chip and below the hologram badge, with anything that looks like a secret masked (`TOKEN=••••`, `Bearer ••••`, `sk-…`, `ghp_…`). Running **subagents** orbit the core as small sparks. Sessions are named after their **git repository**, so working in `repo/client` still shows `repo`.
 ## Run
 
 Requires Node.js and a Rust toolchain ([rustup](https://rustup.rs)).

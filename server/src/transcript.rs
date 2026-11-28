@@ -2,12 +2,15 @@
 //! session transcript. Only `.jsonl` files under the Claude config directory are ever opened.
 
 use std::{
+    collections::HashMap,
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
 use serde_json::Value;
+
+use crate::core::Usage;
 
 /// How much of the transcript end to scan; the latest assistant turn is almost always within this.
 const TAIL_BYTES: u64 = 64 * 1024;
@@ -105,6 +108,54 @@ pub fn parse_tail(text: &str) -> TranscriptInfo {
     info
 }
 
+/// Token totals over the whole transcript. One API response is logged as several entries (one per content
+/// block) carrying the same usage, so entries are de-duplicated by message id.
+pub fn usage_totals(path: &Path) -> std::io::Result<Usage> {
+    let reader = BufReader::new(File::open(path)?);
+    let mut per_message: HashMap<String, Usage> = HashMap::new();
+    let mut anonymous = Usage::default();
+    for line in reader.lines() {
+        let line = line?;
+        if !line.contains("\"usage\"") {
+            continue; // cheap skip for the vast majority of lines
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if v.get("type").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(u) = v.pointer("/message/usage") else {
+            continue;
+        };
+        let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+        let usage = Usage {
+            input: n("input_tokens"),
+            output: n("output_tokens"),
+            cache_read: n("cache_read_input_tokens"),
+            cache_write: n("cache_creation_input_tokens"),
+        };
+        match v.pointer("/message/id").and_then(Value::as_str) {
+            Some(id) => {
+                per_message.insert(id.to_string(), usage);
+            }
+            None => {
+                anonymous.input += usage.input;
+                anonymous.output += usage.output;
+                anonymous.cache_read += usage.cache_read;
+                anonymous.cache_write += usage.cache_write;
+            }
+        }
+    }
+    Ok(per_message.values().fold(anonymous, |mut t, u| {
+        t.input += u.input;
+        t.output += u.output;
+        t.cache_read += u.cache_read;
+        t.cache_write += u.cache_write;
+        t
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +176,30 @@ mod tests {
         assert_eq!(info.git_branch.as_deref(), Some("main"));
         assert_eq!(info.version.as_deref(), Some("2.1.0"));
         assert_eq!(info.permission_mode.as_deref(), Some("plan"));
+    }
+
+    #[test]
+    fn usage_is_summed_once_per_message() {
+        let dir = temp_dir("usage");
+        let path = dir.join("s.jsonl");
+        let u = |id: &str, i: u64, o: u64| {
+            format!(
+                r#"{{"type":"assistant","message":{{"id":"{id}","usage":{{"input_tokens":{i},"output_tokens":{o},"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}}}}}"#
+            )
+        };
+        let lines = [
+            u("m1", 5, 20),
+            u("m1", 5, 20), // same response, second content block
+            r#"{"type":"user","message":{"content":"hi"}}"#.to_string(),
+            u("m2", 3, 7),
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let t = usage_totals(&path).unwrap();
+        assert_eq!(
+            (t.input, t.output, t.cache_read, t.cache_write),
+            (8, 27, 200, 20)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

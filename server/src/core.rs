@@ -56,8 +56,9 @@ enum Event {
     /// The elicitation form was answered.
     Resume,
     Stop,
-    /// Subagent start/stop: the parent's Task tool is still in flight, so only a keep-alive.
-    Heartbeat,
+    /// A subagent started / finished; the parent's Task tool is still in flight.
+    SubagentStart,
+    SubagentStop,
     PreCompact,
     PostCompact,
     SessionEnd,
@@ -74,7 +75,8 @@ impl Event {
             "PermissionRequest" | "Elicitation" => Event::Attention,
             "ElicitationResult" => Event::Resume,
             "Stop" | "StopFailure" => Event::Stop,
-            "SubagentStart" | "SubagentStop" => Event::Heartbeat,
+            "SubagentStart" => Event::SubagentStart,
+            "SubagentStop" => Event::SubagentStop,
             "PreCompact" => Event::PreCompact,
             "PostCompact" => Event::PostCompact,
             "SessionEnd" => Event::SessionEnd,
@@ -111,6 +113,21 @@ pub struct Session {
     pub claude_version: Option<String>,
     /// how the session began: `startup` | `resume` | `clear` (compaction restarts don't overwrite it)
     pub start_source: Option<String>,
+    /// what the shown tool is doing: its command, file or URL (secrets masked)
+    pub tool_detail: Option<String>,
+    /// subagents running right now
+    pub subagents: u32,
+    /// token totals from the transcript (assistant messages)
+    pub usage: Option<Usage>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Usage {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
 }
 
 /// Header-derived info that accompanies a hook payload.
@@ -149,6 +166,8 @@ struct Entry {
     session: Session,
     /// in-flight tools: (tool_use_id, short name), insertion-ordered
     tools: Vec<(String, String)>,
+    /// tool_use_id → what that tool is doing (summary of its input)
+    details: HashMap<String, String>,
     compacting: Option<Compaction>,
 }
 
@@ -351,13 +370,18 @@ impl SessionStore {
                 git_branch: None,
                 claude_version: None,
                 start_source: None,
+                tool_detail: None,
+                subagents: 0,
+                usage: None,
             },
             tools: Vec::new(),
+            details: HashMap::new(),
             compacting: None,
         });
         let Entry {
             session: s,
             tools,
+            details,
             compacting,
         } = entry;
         let prev = s.state;
@@ -405,6 +429,7 @@ impl SessionStore {
             }
             Event::UserPromptSubmit => {
                 tools.clear();
+                s.subagents = 0;
                 s.prompts += 1;
                 s.state = AgentState::Generating;
             }
@@ -414,6 +439,13 @@ impl SessionStore {
                     self.seq += 1;
                     format!("{name}#{}", self.seq)
                 });
+                let input = payload.get("tool_input").cloned().unwrap_or(Value::Null);
+                let detail = crate::approvals::summarize(&name, &input);
+                if detail.is_empty() {
+                    details.remove(&key);
+                } else {
+                    details.insert(key.clone(), detail);
+                }
                 match tools.iter_mut().find(|(k, _)| *k == key) {
                     Some(slot) => slot.1 = name.clone(),
                     None => tools.push((key, name.clone())),
@@ -429,7 +461,8 @@ impl SessionStore {
                     tools.iter().position(|(_, v)| *v == name)
                 });
                 if let Some(i) = idx {
-                    tools.remove(i);
+                    let (key, _) = tools.remove(i);
+                    details.remove(&key);
                 }
                 s.state = AgentState::Generating;
             }
@@ -462,18 +495,22 @@ impl SessionStore {
                 s.state = after_compaction(trigger);
             }
             // The parent's Task tool is still in flight; its PostToolUse settles the state.
-            Event::Heartbeat => {}
+            Event::SubagentStart => s.subagents += 1,
+            Event::SubagentStop => s.subagents = s.subagents.saturating_sub(1),
             Event::Stop => {
                 tools.clear();
+                s.subagents = 0;
                 s.state = AgentState::Idle;
             }
             Event::SessionEnd => {
                 tools.clear();
+                s.subagents = 0;
                 *compacting = None;
                 s.state = AgentState::Offline;
             }
         }
 
+        details.retain(|k, _| tools.iter().any(|(t, _)| t == k));
         match s.state {
             AgentState::Waiting => {
                 s.running = tools.len();
@@ -494,7 +531,31 @@ impl SessionStore {
                 }
             }
         }
+        s.tool_detail = match (&s.tool, tools.last()) {
+            (Some(_), Some((key, _))) => details.get(key).cloned(),
+            _ => None,
+        };
         Some(s.clone())
+    }
+
+    /// Token totals read from the transcript. Returns whether they changed.
+    pub fn set_usage(&mut self, id: &str, usage: Usage) -> bool {
+        let Some(e) = self.entries.get_mut(id) else {
+            return false;
+        };
+        let changed = e.session.usage != Some(usage);
+        e.session.usage = Some(usage);
+        changed
+    }
+
+    /// Show the project by its repository name (cwd may be a subfolder). Returns whether it changed.
+    pub fn set_project(&mut self, id: &str, project: &str) -> bool {
+        let Some(e) = self.entries.get_mut(id) else {
+            return false;
+        };
+        let changed = e.session.project != project;
+        e.session.project = project.to_string();
+        changed
     }
 
     /// The user answered a permission request from the desk: leave WAITING right away
@@ -1007,6 +1068,63 @@ mod tests {
         let s = h.store.resolve_waiting(SID, true, 11).unwrap();
         assert_eq!(s.state, Generating, "not waiting: unchanged");
         assert!(h.store.resolve_waiting("nope", true, 12).is_none());
+    }
+
+    #[test]
+    fn tool_detail_follows_the_shown_tool() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        let s = h.fire("PreToolUse", json!({ "tool_name": "Bash", "tool_use_id": "a", "tool_input": { "command": "npm test" } }));
+        assert_eq!(s.tool_detail.as_deref(), Some("npm test"));
+        let s = h.fire("PreToolUse", json!({ "tool_name": "Read", "tool_use_id": "b", "tool_input": { "file_path": "/x/a.ts" } }));
+        assert_eq!(s.tool_detail.as_deref(), Some("/x/a.ts"));
+        let s = h.fire(
+            "PostToolUse",
+            json!({ "tool_name": "Read", "tool_use_id": "b" }),
+        );
+        assert_eq!(
+            s.tool_detail.as_deref(),
+            Some("npm test"),
+            "back to the one still running"
+        );
+        let s = h.fire(
+            "PostToolUse",
+            json!({ "tool_name": "Bash", "tool_use_id": "a" }),
+        );
+        assert_eq!(s.tool_detail, None);
+    }
+
+    #[test]
+    fn subagents_are_counted_per_turn() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire("SubagentStart", json!({}));
+        assert_eq!(h.fire("SubagentStart", json!({})).subagents, 2);
+        assert_eq!(h.fire("SubagentStop", json!({})).subagents, 1);
+        assert_eq!(h.fire("Stop", json!({})).subagents, 0);
+        assert_eq!(
+            h.fire("SubagentStop", json!({})).subagents,
+            0,
+            "never negative"
+        );
+    }
+
+    #[test]
+    fn usage_and_project_overrides() {
+        let mut h = Harness::new();
+        h.fire("SessionStart", json!({}));
+        let u = Usage {
+            input: 10,
+            output: 5,
+            cache_read: 100,
+            cache_write: 7,
+        };
+        assert!(h.store.set_usage(SID, u));
+        assert!(!h.store.set_usage(SID, u), "unchanged");
+        assert_eq!(h.store.get(SID).unwrap().usage, Some(u));
+        assert!(h.store.set_project(SID, "ClawdDesk3D"));
+        assert_eq!(h.store.get(SID).unwrap().project, "ClawdDesk3D");
+        assert!(!h.store.set_usage("nope", u));
     }
 
     #[test]

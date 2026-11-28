@@ -90,6 +90,68 @@ fn truncate(s: &str, max: usize) -> String {
     format!("{cut}…")
 }
 
+/// Hide things that look like secrets in text shown on screen (tokens, passwords, API keys).
+pub fn mask_secrets(text: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut after_bearer = false;
+    for w in text.split(' ') {
+        let masked = if after_bearer {
+            "••••".to_string()
+        } else if let Some((k, _)) = w
+            .split_once('=')
+            .filter(|(k, v)| !v.is_empty() && is_secret_name(k))
+        {
+            format!("{k}=••••")
+        } else if looks_like_key(w) {
+            "••••".to_string()
+        } else {
+            w.to_string()
+        };
+        after_bearer = w.eq_ignore_ascii_case("bearer");
+        out.push(masked);
+    }
+    out.join(" ")
+}
+
+fn is_secret_name(name: &str) -> bool {
+    let n = name.trim_start_matches('-').to_ascii_lowercase();
+    [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "pwd",
+        "api_key",
+        "apikey",
+        "api-key",
+        "access_key",
+        "private_key",
+        "auth",
+    ]
+    .iter()
+    .any(|s| n.ends_with(s))
+}
+
+/// Long opaque credentials: `sk-…`, `ghp_…`, `xox?-…`, AWS access keys.
+fn looks_like_key(w: &str) -> bool {
+    let w = w.trim_matches(|c: char| c == '"' || c == '\'' || c == ',');
+    let prefixed = [
+        "sk-",
+        "sk_",
+        "ghp_",
+        "gho_",
+        "ghs_",
+        "github_pat_",
+        "xoxb-",
+        "xoxp-",
+        "AKIA",
+        "AIza",
+    ]
+    .iter()
+    .any(|p| w.starts_with(p));
+    prefixed && w.len() >= 20
+}
+
 /// One line describing what the tool is about to do, from its `tool_input`.
 pub fn summarize(tool: &str, input: &Value) -> String {
     let s = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("");
@@ -110,7 +172,7 @@ pub fn summarize(tool: &str, input: &Value) -> String {
         _ => String::new(),
     };
     if !text.is_empty() {
-        return truncate(&text.replace('\n', " ⏎ "), SUMMARY_MAX);
+        return truncate(&mask_secrets(&text.replace('\n', " ⏎ ")), SUMMARY_MAX);
     }
     match input {
         Value::Null => String::new(),
@@ -201,6 +263,37 @@ mod tests {
         let long = summarize("Bash", &json!({ "command": "x".repeat(500) }));
         assert_eq!(long.chars().count(), SUMMARY_MAX);
         assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn secrets_are_masked() {
+        assert_eq!(
+            mask_secrets("curl -H Authorization: Bearer abc123 https://x"),
+            "curl -H Authorization: Bearer •••• https://x"
+        );
+        assert_eq!(
+            mask_secrets("export API_KEY=hunter2 && run"),
+            "export API_KEY=•••• && run"
+        );
+        assert_eq!(
+            mask_secrets("mysql --password=s3cret"),
+            "mysql --password=••••"
+        );
+        assert_eq!(
+            mask_secrets("echo sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX"),
+            "echo ••••"
+        );
+        assert_eq!(
+            mask_secrets("npm test -- --watch=false"),
+            "npm test -- --watch=false"
+        );
+        assert_eq!(
+            summarize(
+                "Bash",
+                &json!({ "command": "GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxx gh pr list" })
+            ),
+            "GITHUB_TOKEN=•••• gh pr list"
+        );
     }
 
     #[test]

@@ -12,6 +12,7 @@ import { ServerRack } from './ServerRack';
 import { Nameplate } from './Nameplate';
 import { TokenFountain } from './Particles';
 import { Satellites } from './Satellites';
+import { Subagents } from './Subagents';
 
 function Mug() {
   return (
@@ -125,6 +126,7 @@ export function Diorama() {
       <Plant />
       <Notes />
       <Satellites />
+      <Subagents />
     </group>
   );
 }

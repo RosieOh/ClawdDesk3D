@@ -3,7 +3,7 @@
 // recordings are usually not ours to redistribute. Kinds without clips fall back to speech synthesis.
 
 import type { Announcement } from './announcer';
-import { speech } from './speech';
+import { decodeResponse, enqueue, stopAll, unlockAudio } from './player';
 
 export type ClipKind = Announcement['kind'] | 'greeting';
 const KINDS: ClipKind[] = ['greeting', 'done', 'failed', 'permission', 'started', 'ended'];
@@ -60,89 +60,17 @@ export async function loadPack(): Promise<VoicePack | null> {
 
 // ---------------------------------------------------------------- playback
 
-let ctx: AudioContext | null = null;
-let analyser: AnalyserNode;
-let gain: GainNode;
 const buffers = new Map<string, Promise<AudioBuffer>>();
-const queue: string[] = [];
-let playing = false;
 let lastClip: string | null = null;
-let currentSource: AudioBufferSourceNode | null = null;
-const MAX_QUEUE = 2;
-
-function audio(): AudioContext {
-  if (ctx) return ctx;
-  ctx = new AudioContext();
-  analyser = ctx.createAnalyser();
-  analyser.fftSize = 512;
-  gain = ctx.createGain();
-  analyser.connect(gain).connect(ctx.destination);
-  return ctx;
-}
-
-/** Resume the audio context from a user gesture (browsers start it suspended). */
-export function unlockClips() {
-  const c = audio();
-  if (c.state === 'suspended') void c.resume();
-}
 
 function decode(path: string): Promise<AudioBuffer> {
   let p = buffers.get(path);
   if (!p) {
-    p = fetch(clipUrl(path))
-      .then((r) => {
-        if (!r.ok) throw new Error(`${r.status} ${path}`);
-        return r.arrayBuffer();
-      })
-      .then((b) => audio().decodeAudioData(b));
+    p = fetch(clipUrl(path)).then((r) => decodeResponse(r, path));
     p.catch(() => buffers.delete(path)); // retry next time
     buffers.set(path, p);
   }
   return p;
-}
-
-/** Drive the core's glow from the clip's loudness while it plays. */
-function meter() {
-  const data = new Uint8Array(analyser.fftSize);
-  const tick = () => {
-    if (!playing) return;
-    analyser.getByteTimeDomainData(data);
-    let sum = 0;
-    for (const v of data) sum += ((v - 128) / 128) ** 2;
-    const rms = Math.sqrt(sum / data.length);
-    speech.pulse = Math.max(speech.pulse, Math.min(1, rms * 5));
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}
-
-async function next(volume: number): Promise<void> {
-  const path = queue.shift();
-  if (!path) {
-    playing = false;
-    speech.speaking = 0;
-    return;
-  }
-  playing = true;
-  try {
-    const buf = await decode(path);
-    const c = audio();
-    gain.gain.value = volume;
-    const src = c.createBufferSource();
-    src.buffer = buf;
-    src.connect(analyser);
-    currentSource = src;
-    speech.speaking = 1;
-    meter();
-    await new Promise<void>((resolve) => {
-      src.onended = () => resolve();
-      src.start();
-    });
-  } catch (err) {
-    console.warn('[voicepack] could not play', path, err);
-  }
-  currentSource = null;
-  return next(volume);
 }
 
 /** Queue a clip; returns false when there is nothing to play for this kind. */
@@ -150,17 +78,9 @@ export function playClip(pack: VoicePack | null, kind: ClipKind): boolean {
   const path = pickClip(pack, kind, lastClip);
   if (!path || !pack) return false;
   lastClip = path;
-  if (queue.length >= MAX_QUEUE) queue.shift();
-  queue.push(path);
-  if (!playing) void next(pack.volume);
+  enqueue(() => decode(path), pack.volume, path);
   return true;
 }
 
-export function stopClips() {
-  queue.length = 0;
-  try {
-    currentSource?.stop();
-  } catch {
-    /* already stopped */
-  }
-}
+export const unlockClips = unlockAudio;
+export const stopClips = stopAll;

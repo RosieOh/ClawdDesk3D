@@ -2,8 +2,10 @@
 //! Receives Claude Code hook POSTs and broadcasts normalized session state over WebSocket.
 
 mod core;
+mod transcript;
 
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -28,11 +30,22 @@ use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use crate::core::{
     Meta, ROUTE_EVENTS, Session, SessionStore, is_allowed_origin, parse_origin_list,
 };
+use crate::transcript::{TranscriptInfo, allowed_path, config_root, read_tail};
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 /// Hook payloads (e.g. PostToolUse with a large tool_response) can be big; anything larger is ignored, still with 200.
 const BODY_LIMIT: usize = 10 * 1024 * 1024;
+/// Events after which the transcript may say something new (model switch, branch change, new turn).
+/// A session's first event always reads it too.
+const TRANSCRIPT_EVENTS: [&str; 6] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "Stop",
+    "StopFailure",
+    "PostCompact",
+    "Notification",
+];
 
 #[derive(Clone)]
 struct AppState {
@@ -41,6 +54,8 @@ struct AppState {
     extra_origins: Arc<Vec<String>>,
     host: Arc<str>,
     port: u16,
+    /// Claude config dir; transcripts are only read from inside it.
+    transcript_root: Option<Arc<PathBuf>>,
 }
 
 fn now_ms() -> u64 {
@@ -133,18 +148,32 @@ async fn handle_hook(
         session_id: header(headers, "x-session-id").map(String::from),
     };
 
+    let lookup = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .or(meta.session_id.as_deref())
+        .unwrap_or("default")
+        .to_string();
+    let known = app.store.lock().unwrap().get(&lookup).is_some();
+    let info = if TRANSCRIPT_EVENTS.contains(&event) || !known {
+        read_transcript(app, &payload).await
+    } else {
+        None
+    };
+
     let updated = {
         let mut store = app.store.lock().unwrap();
-        let lookup = payload
-            .get("session_id")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .or(meta.session_id.as_deref())
-            .unwrap_or("default");
-        let prev = store.get(lookup).map(|s| s.state.as_str());
-        store
-            .apply(event, &payload, &meta, now_ms())
-            .map(|s| (prev, s))
+        let prev = store.get(&lookup).map(|s| s.state.as_str());
+        store.apply(event, &payload, &meta, now_ms()).map(|s| {
+            let merged = info.is_some_and(|info| store.merge_transcript(&s.id, info));
+            let s = if merged {
+                store.get(&s.id).cloned().unwrap_or(s)
+            } else {
+                s
+            };
+            (prev, s)
+        })
     };
 
     if let Some((prev, s)) = updated {
@@ -164,6 +193,19 @@ async fn handle_hook(
         app.broadcast("hook");
     }
     StatusCode::OK
+}
+
+/// Session details from the transcript the hook points at (blocking file I/O off the async runtime).
+async fn read_transcript(app: &AppState, payload: &Value) -> Option<TranscriptInfo> {
+    let root = app.transcript_root.clone()?;
+    let raw = payload.get("transcript_path")?.as_str()?.to_string();
+    tokio::task::spawn_blocking(move || {
+        let path = allowed_path(&raw, &root)?;
+        read_tail(&path).ok().filter(|i| !i.is_empty())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn hook_route(
@@ -292,6 +334,7 @@ async fn main() {
         extra_origins: extra_origins.clone(),
         host: host.clone().into(),
         port,
+        transcript_root: config_root().map(Arc::new),
     };
 
     let cors_origins = extra_origins.clone();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentState, Session } from '../store';
-import { Announcer, phrase, statusReport, welcomeBack, type Announcement } from './announcer';
+import { Announcer, alertPhrase, briefing, phrase, statusReport, welcomeBack, type Announcement } from './announcer';
 import { pickVoice } from './speech';
 import { effectiveSessions } from './useJarvisVoice';
 
@@ -178,5 +178,26 @@ describe('welcomeBack', () => {
     expect(welcomeBack(['web-app is complete, sir.'], 'en')).toBe('Welcome back, sir. While you were away: web-app is complete, sir.');
     expect(welcomeBack(['a.', 'b.', 'c.', 'd.', 'e.'], 'en')).toBe('Welcome back, sir. While you were away: a. b. c. And 2 more.');
     expect(welcomeBack(['web-app 작업을 마쳤습니다.'], 'ko')).toBe('다시 오셨군요. 자리를 비우신 동안: web-app 작업을 마쳤습니다.');
+  });
+});
+
+describe('alerts and briefing', () => {
+  const ci = { kind: 'ci_failed' as const, repo: 'me/ClawdDesk3D', number: 12, title: 'Voice', url: 'u' };
+  const rev = { kind: 'review_requested' as const, repo: 'org/app', number: 7, title: 'Fix login', url: 'u' };
+
+  it('phrases alerts', () => {
+    expect(alertPhrase({ ...ci, id: 'a', at: 0 }, 'en')).toBe('Sir, CI failed on pull request ClawdDesk3D #12: Voice.');
+    expect(alertPhrase({ ...rev, id: 'b', at: 0 }, 'ko')).toBe('app #7에 리뷰 요청이 왔습니다: Fix login');
+  });
+
+  it('briefs by time of day with GitHub state', () => {
+    const gh = { repos: ['me/ClawdDesk3D'], openPrs: 2, ciFailing: [ci], reviewRequested: [rev], checkedAt: 0 };
+    expect(briefing(gh, [s('a', 'IDLE')], 'en', 9)).toBe(
+      'Good morning, sir. 1 Claude session is online. You have 2 open pull requests. CI is failing on ClawdDesk3D #12. 1 review is waiting for you, including app #7.',
+    );
+    expect(briefing({ ...gh, openPrs: 0, ciFailing: [], reviewRequested: [] }, [], 'en', 20)).toBe(
+      'Good evening, sir. No Claude sessions are running. Nothing is waiting for you on GitHub.',
+    );
+    expect(briefing(null, [], 'ko', 14)).toBe('좋은 오후입니다. 연결된 Claude 세션은 없습니다.');
   });
 });

@@ -1,7 +1,13 @@
 {
   "version": "0.2",
   "language": "en",
-  "ignorePaths": ["node_modules", "**/target", "**/dist", "package-lock.json", "server/Cargo.lock"],
+  "ignorePaths": [
+    "node_modules",
+    "**/target",
+    "**/dist",
+    "package-lock.json",
+    "server/Cargo.lock"
+  ],
   "words": [
     "clawd",
     "clawddesk",
@@ -22,6 +28,11 @@
     "swatinem",
     "dependabot",
     "pgrep",
-    "elicitation"
+    "elicitation",
+    "oneshot",
+    "voicelab",
+    "voicepack",
+    "mlx",
+    "approvers"
   ]
 }

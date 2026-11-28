@@ -491,6 +491,29 @@ impl SessionStore {
         Some(s.clone())
     }
 
+    /// The user answered a permission request from the desk: leave WAITING right away
+    /// (allowed → the tool runs now; denied → Claude carries on generating).
+    pub fn resolve_waiting(&mut self, id: &str, allowed: bool, now: u64) -> Option<Session> {
+        let e = self.entries.get_mut(id)?;
+        let s = &mut e.session;
+        if s.state != AgentState::Waiting {
+            return Some(s.clone());
+        }
+        s.last_seen = now;
+        match e.tools.last() {
+            Some((_, name)) if allowed => {
+                s.state = AgentState::ToolRunning;
+                s.tool = Some(name.clone());
+                s.running = e.tools.len();
+            }
+            _ => {
+                s.state = AgentState::Generating;
+                s.tool = None;
+            }
+        }
+        Some(s.clone())
+    }
+
     /// Drop stale / long-ended sessions at time `now`. Returns the removed sessions.
     pub fn sweep(&mut self, now: u64) -> Vec<Session> {
         let expired: Vec<String> = self
@@ -952,6 +975,27 @@ mod tests {
             "nothing new"
         );
         assert!(!h.store.merge_transcript("nope", TranscriptInfo::default()));
+    }
+
+    #[test]
+    fn resolving_a_waiting_session_from_the_desk() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Bash", "tool_use_id": "a" }),
+        );
+        h.fire("PermissionRequest", json!({ "tool_name": "Bash" }));
+        let s = h.store.resolve_waiting(SID, true, 9).unwrap();
+        assert_eq!((s.state, s.tool.as_deref()), (ToolRunning, Some("Bash")));
+
+        h.fire("PermissionRequest", json!({ "tool_name": "Bash" }));
+        let s = h.store.resolve_waiting(SID, false, 10).unwrap();
+        assert_eq!((s.state, s.tool), (Generating, None));
+
+        let s = h.store.resolve_waiting(SID, true, 11).unwrap();
+        assert_eq!(s.state, Generating, "not waiting: unchanged");
+        assert!(h.store.resolve_waiting("nope", true, 12).is_none());
     }
 
     #[test]

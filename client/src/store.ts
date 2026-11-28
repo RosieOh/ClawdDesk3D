@@ -30,6 +30,18 @@ export interface Session {
   startSource?: string | null;
 }
 
+/** A permission request the bridge is holding for an answer from the desk. */
+export interface Approval {
+  id: string;
+  sessionId: string;
+  project: string;
+  tool: string;
+  /** what the tool wants to do: command, file, URL… */
+  summary: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
 export const COMBO_WINDOW_MS = 5 * 60 * 1000;
 const MAX_SIM_SATELLITES = 6;
 
@@ -76,6 +88,8 @@ interface StoreState extends Derived {
   simSats: Session[];
   /** Dock override. In live mode it's cleared by the next real hook event. */
   override: { state: AgentState; tool: string | null } | null;
+  /** permission requests waiting for Approve / Deny (live mode only) */
+  approvals: Approval[];
   /** session chosen in the HUD list; cleared automatically when that session disappears */
   pinnedId: string | null;
 
@@ -97,7 +111,7 @@ interface StoreState extends Derived {
   clapOn: boolean;
 
   setConnected: (c: boolean) => void;
-  applySnapshot: (sessions: Session[], reason: string) => void;
+  applySnapshot: (sessions: Session[], reason: string, approvals?: Approval[]) => void;
   simulate: (state: AgentState, tool?: string | null) => void;
   addSatellite: () => void;
   clearSatellites: () => void;
@@ -221,6 +235,7 @@ export const useStore = create<StoreState>((set, get) => {
     simSats: [],
     override: null,
     pinnedId: null,
+    approvals: [],
     ...derive({ connected: false, live: [], simSats: [], override: null, pinnedId: null }),
 
     combo: 0,
@@ -238,11 +253,11 @@ export const useStore = create<StoreState>((set, get) => {
     setConnected: (connected) => {
       if (connected === get().connected) return;
       // Dropping back to the simulator? Start from a calm idle desk.
-      commit({ connected, override: null, live: connected ? get().live : [] });
+      commit({ connected, override: null, live: connected ? get().live : [], approvals: connected ? get().approvals : [] });
     },
 
-    applySnapshot: (sessions, reason) => {
-      commit({ live: sessions, ...(reason === 'hook' ? { override: null } : {}) });
+    applySnapshot: (sessions, reason, approvals = []) => {
+      commit({ live: sessions, approvals, ...(reason === 'hook' ? { override: null } : {}) });
     },
 
     simulate: (state, tool = null) => commit({ override: { state, tool: state === 'TOOL_RUNNING' ? tool : null } }),

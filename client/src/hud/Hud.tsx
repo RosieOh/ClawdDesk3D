@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { COMBO_WINDOW_MS, MAX_SIM_SATELLITES, useStore, type AgentState, type Session } from '../store';
+import { COMBO_WINDOW_MS, MAX_SIM_SATELLITES, useStore, type AgentState, type Approval, type Session } from '../store';
+import { decideApproval } from '../bridge';
 import { branchLabel, permissionMode, prettyModel, shortId, sourceLabel, startLabel } from '../format';
 import { STATE_HEX, stateHex } from '../scene/mix';
 import { playUiClick } from '../audio';
@@ -403,6 +404,85 @@ function Dock() {
   );
 }
 
+/** One held permission request: what wants to run, a countdown, Approve / Deny. Click only (no shortcut). */
+function ApprovalCard({ a, now }: { a: Approval; now: number }) {
+  const [busy, setBusy] = useState<'allow' | 'deny' | null>(null);
+  const [failed, setFailed] = useState(false);
+  const total = Math.max(1, a.expiresAt - a.createdAt);
+  const left = Math.max(0, a.expiresAt - now);
+  const tint = stateHex('WAITING', null);
+
+  const answer = async (behavior: 'allow' | 'deny') => {
+    playUiClick();
+    setBusy(behavior);
+    const ok = await decideApproval(a.id, behavior);
+    if (!ok) {
+      setFailed(true);
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div
+      className={`${glass} pointer-events-auto w-[min(420px,calc(100vw-32px))] p-3.5`}
+      style={{ borderColor: `${tint}66`, boxShadow: `0 0 28px ${tint}33` }}
+      data-testid="approval"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <Label>Permission · {a.project}</Label>
+        <span className="font-mono text-[10px] tabular-nums text-white/50">{Math.ceil(left / 1000)}s</span>
+      </div>
+      <div className="mt-1.5 flex items-start gap-2">
+        <span className="shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold" style={{ background: `${tint}22`, color: tint }}>
+          {a.tool}
+        </span>
+        <code className="line-clamp-3 break-all font-mono text-[12px] leading-snug text-white/90" title={a.summary}>
+          {a.summary || '(no details)'}
+        </code>
+      </div>
+      <div className="mt-2.5 h-0.5 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full transition-[width] duration-1000 ease-linear" style={{ width: `${(left / total) * 100}%`, background: tint }} />
+      </div>
+      {failed ? (
+        <div className="mt-2.5 font-mono text-[11px] text-white/55">Expired or already answered: answer in Claude Code.</div>
+      ) : (
+        <div className="mt-2.5 flex justify-end gap-2">
+          <button
+            onClick={() => answer('deny')}
+            disabled={busy != null}
+            className="rounded-lg border border-rose-300/30 bg-rose-400/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-rose-200 hover:bg-rose-400/20 disabled:opacity-50"
+            data-testid="approval-deny"
+          >
+            {busy === 'deny' ? '…' : 'Deny'}
+          </button>
+          <button
+            onClick={() => answer('allow')}
+            disabled={busy != null}
+            className="rounded-lg border border-emerald-300/40 bg-emerald-400/15 px-3 py-1.5 font-mono text-[11px] font-semibold text-emerald-200 hover:bg-emerald-400/25 disabled:opacity-50"
+            data-testid="approval-allow"
+          >
+            {busy === 'allow' ? '…' : 'Approve'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Approvals() {
+  const approvals = useStore((s) => s.approvals);
+  const now = useNow(250);
+  if (!approvals.length) return null;
+  return (
+    <div className="flex flex-col items-center gap-2">
+      {approvals.slice(0, 3).map((a) => (
+        <ApprovalCard key={a.id} a={a} now={now} />
+      ))}
+      {approvals.length > 3 && <div className="font-mono text-[10px] text-white/50">+{approvals.length - 3} more</div>}
+    </div>
+  );
+}
+
 const CAPTION_MS = 6_000;
 
 /** Subtitle for the latest announcement: always shown, spoken or not. */
@@ -456,6 +536,7 @@ export function Hud() {
     <div className="pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <StatusPanel />
+        <Approvals />
         <StatsPanel />
       </div>
       <div className="flex flex-col items-center gap-2">

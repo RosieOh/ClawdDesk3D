@@ -4,13 +4,9 @@
 import { useEffect } from 'react';
 import { useStore, type Session } from '../store';
 import { Announcer, DEFAULT_MIN_TURN_MS, phrase } from './announcer';
-import { checkLab } from './lab';
 import { engines, sayLine } from './say';
 import { hush, unlockSpeech } from './speech';
 import { loadPack, stopClips, unlockClips } from './voicepack';
-
-/** How often to look for a voice lab that was started after the page. */
-const LAB_POLL_MS = 15_000;
 
 /** Same line again within this window is dropped (e.g. two sessions finishing together). */
 const DEDUPE_MS = 4_000;
@@ -57,15 +53,7 @@ export function useJarvisVoice() {
       useStore.getState().setVoicePack(pack?.name ?? null);
       if (pack) console.info(`[voicepack] ${pack.name}: ${Object.keys(pack.clips).join(', ')}`);
     });
-    const probeLab = async () => {
-      const lab = await checkLab();
-      if (!alive) return;
-      if (Boolean(lab) !== Boolean(engines.lab)) console.info(lab ? `[voice lab] using “${lab.voice}”` : '[voice lab] gone');
-      engines.lab = lab;
-      useStore.getState().setVoiceLab(lab?.voice ?? null);
-    };
-    void probeLab();
-    const labTimer = window.setInterval(probeLab, LAB_POLL_MS);
+
     let awaitingBaseline = false;
 
     const unsubscribe = useStore.subscribe((s, prev) => {
@@ -95,7 +83,6 @@ export function useJarvisVoice() {
 
     return () => {
       alive = false;
-      window.clearInterval(labTimer);
       stopClips();
       unsubscribe();
       window.removeEventListener('pointerdown', unlock);

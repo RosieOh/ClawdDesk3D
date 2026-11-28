@@ -3,3 +3,7 @@ dist
 .DS_Store
 *.log
 target
+
+# Local media you may not redistribute (e.g. voice packs). Never commit these.
+assets/
+voicepack/

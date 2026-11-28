@@ -8,7 +8,8 @@ export type Announcement =
   | { kind: 'done'; sessionId: string; project: string; durationMs: number }
   | { kind: 'failed'; sessionId: string; project: string }
   | { kind: 'permission'; sessionId: string; project: string; tool: string | null }
-  | { kind: 'started'; sessionId: string; project: string };
+  | { kind: 'started'; sessionId: string; project: string }
+  | { kind: 'ended'; sessionId: string; project: string };
 
 export interface AnnouncerOptions {
   /** Turns shorter than this finish silently (quick replies don't need a voice). */
@@ -53,7 +54,9 @@ export class Announcer {
       }
       if (prev.state === s.state) continue;
 
-      if (s.state === 'WAITING') {
+      if (s.state === 'OFFLINE') {
+        out.push({ kind: 'ended', ...base });
+      } else if (s.state === 'WAITING') {
         out.push({ kind: 'permission', ...base, tool: (s.running ?? 0) > 0 ? (s.lastTool ?? null) : null });
       } else if (s.state === 'IDLE' && isWorking(prev.state)) {
         const durationMs = prev.turnSince == null ? 0 : now - prev.turnSince;
@@ -96,6 +99,8 @@ export function phrase(a: Announcement, lang: Lang, withProject: boolean): strin
       }
       case 'started':
         return `${a.project} 세션이 연결되었습니다.`;
+      case 'ended':
+        return `${a.project} 세션이 종료되었습니다.`;
     }
   }
   // English speaks like a certain British butler AI.
@@ -111,5 +116,7 @@ export function phrase(a: Announcement, lang: Lang, withProject: boolean): strin
       return a.tool ? `Sir, I need your authorization to run ${a.tool}.` : 'Sir, your attention is required.';
     case 'started':
       return `${a.project} is online, sir.`;
+    case 'ended':
+      return `${a.project} has gone offline, sir.`;
   }
 }

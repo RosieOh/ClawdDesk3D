@@ -78,6 +78,13 @@ describe('Announcer', () => {
     expect(lines).toEqual([{ kind: 'started', sessionId: 'web', project: 'web' }]);
   });
 
+  it('announces a session going offline', () => {
+    const a = new Announcer();
+    a.update([s('app', 'IDLE')], 0, MIN);
+    expect(a.update([s('app', 'OFFLINE')], 1_000, MIN)).toEqual([{ kind: 'ended', sessionId: 'app', project: 'app' }]);
+    expect(a.update([s('app', 'OFFLINE')], 2_000, MIN)).toEqual([]);
+  });
+
   it('forgets removed sessions, and reset() makes a new baseline', () => {
     const a = new Announcer();
     a.update([s('app', 'IDLE')], 0, MIN);
@@ -115,6 +122,8 @@ describe('phrase', () => {
     expect(phrase({ ...perm, tool: null }, 'en', false)).toBe('Sir, your attention is required.');
     expect(phrase({ kind: 'failed', sessionId: 'a', project: 'x' }, 'en', true)).toBe("I'm afraid x has stopped with an error, sir.");
     expect(phrase({ kind: 'started', sessionId: 'a', project: 'x' }, 'en', false)).toBe('x is online, sir.');
+    expect(phrase({ kind: 'ended', sessionId: 'a', project: 'x' }, 'en', false)).toBe('x has gone offline, sir.');
+    expect(phrase({ kind: 'ended', sessionId: 'a', project: 'x' }, 'ko', false)).toBe('x 세션이 종료되었습니다.');
   });
 });
 

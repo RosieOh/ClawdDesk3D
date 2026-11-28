@@ -640,6 +640,87 @@ mod tests {
     }
 
     #[test]
+    fn permission_request_waits_immediately() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Bash", "tool_use_id": "a" }),
+        );
+        let s = h.fire("PermissionRequest", json!({ "tool_name": "Bash" }));
+        assert_eq!(s.state, Waiting);
+        assert_eq!(s.running, 1);
+        assert_eq!(
+            h.fire(
+                "PostToolUse",
+                json!({ "tool_name": "Bash", "tool_use_id": "a" })
+            )
+            .state,
+            Generating
+        );
+    }
+
+    #[test]
+    fn elicitation_round_trip() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "mcp__jira__create", "tool_use_id": "m" }),
+        );
+        assert_eq!(h.fire("Elicitation", json!({})).state, Waiting);
+        let s = h.fire("ElicitationResult", json!({}));
+        assert_eq!(
+            s.state, ToolRunning,
+            "the MCP tool that asked is still running"
+        );
+        assert_eq!(s.tool.as_deref(), Some("create"));
+        // A stray result outside WAITING changes nothing.
+        h.fire("Stop", json!({}));
+        assert_eq!(h.fire("ElicitationResult", json!({})).state, Idle);
+    }
+
+    #[test]
+    fn post_compact_settles_before_the_compact_restart() {
+        let mut h = Harness::new();
+        h.fire("UserPromptSubmit", json!({}));
+        h.fire("PreCompact", json!({ "trigger": "auto" }));
+        assert_eq!(
+            h.fire("PostCompact", json!({ "trigger": "auto" })).state,
+            Generating
+        );
+        assert_eq!(
+            h.fire("SessionStart", json!({ "source": "compact" })).state,
+            Generating,
+            "restart keeps the settled state"
+        );
+
+        h.fire("Stop", json!({}));
+        h.fire("PreCompact", json!({ "trigger": "manual" }));
+        assert_eq!(
+            h.fire("PostCompact", json!({})).state,
+            Idle,
+            "pending trigger wins over a missing payload field"
+        );
+        assert_eq!(
+            h.fire("SessionStart", json!({ "source": "compact" })).state,
+            Idle
+        );
+    }
+
+    #[test]
+    fn subagent_start_is_only_a_heartbeat() {
+        let mut h = Harness::new();
+        h.fire(
+            "PreToolUse",
+            json!({ "tool_name": "Task", "tool_use_id": "t" }),
+        );
+        let s = h.fire("SubagentStart", json!({}));
+        assert_eq!(s.state, ToolRunning);
+        assert_eq!(s.tool.as_deref(), Some("Task"));
+    }
+
+    #[test]
     fn subagent_stop_is_only_a_heartbeat() {
         let mut h = Harness::new();
         h.fire(

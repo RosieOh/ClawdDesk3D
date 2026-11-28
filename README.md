@@ -83,7 +83,7 @@ Paths are relative to the pack folder (a symlink inside it to wherever the files
 
 ### Your own voice (voice lab)
 
-The desk can speak with a voice cloned from **your own recording**: F5-TTS running locally on Apple Silicon (MLX), zero-shot from a ~10 s reference clip, no training run. Use your own voice or that of someone who agreed to it; don't clone people who haven't.
+The voice lab also transcribes spoken commands (below). The desk can speak with a voice cloned from **your own recording**: F5-TTS running locally on Apple Silicon (MLX), zero-shot from a ~10 s reference clip, no training run. Use your own voice or that of someone who agreed to it; don't clone people who haven't.
 
 ```bash
 npm run voice:setup     # once: Python 3.12 env in voice-lab/.venv (~2-3 GB incl. the model on first start)
@@ -95,12 +95,25 @@ The bridge notices the lab within ~10 s and tells the page (the voice button tur
 
 Priority when speaking: a voice-pack clip for that moment → your cloned voice (English) → the browser's voice.
 
+## Voice commands
+
+With the voice lab running (`npm run voice:serve`; a reference recording is optional, transcription works without one), press **Space** or **🎙 TALK** and speak; a double clap while JARVIS is awake does the same ("Yes, sir?"). Recording stops by itself after a short pause, is transcribed on this Mac by Whisper (`whisper-large-v3-turbo` via MLX, Korean and English, under a second for a sentence) and then:
+
+| You say | JARVIS |
+|---|---|
+| "status", "how's it going?", "상태 알려줘" | reads the session status |
+| "be quiet", "조용히 해줘" | turns the voice off |
+| "never mind", "취소" | drops it |
+| anything else, e.g. "Jarvis, run the tests and tell me what fails" | runs it as a task for Claude in the **project of the session shown on the desk** |
+
+A task runs as `claude -p "<what you said>"` in that session's folder, started by the bridge. It is a normal headless Claude Code session: it appears on the desk, and tools that need permission come to the desk's Approve / Deny (with no approver, Claude Code denies them, as headless runs always do). When it finishes, JARVIS reads the start of Claude's answer and the caption shows more. At most two tasks run at once; each is stopped after 15 minutes. Only the desk page or the menu bar app can start tasks.
+
 ## Double clap
 
 Press **C** (or **👏**) to let the page listen to the microphone. Then a **double clap**:
 
 - while the voice is off: wakes JARVIS (voice on, "At your service, sir.")
-- while it is on: a status report ("Sir, 3 sessions are online. web-app is waiting for your approval. api is working.")
+- while it is on: "Yes, sir?" and it listens for a command (see above); without the voice lab, a status report instead ("Sir, 3 sessions are online. web-app is waiting for your approval. api is working.")
 
 Detection runs in an AudioWorklet (so it also works with the tab in the background) on the raw signal: a clap is a sharp peak well above the room's noise floor that dies away within ~80 ms; two of them 150-700 ms apart make a double clap, so talking, music or a single knock don't trigger it. Audio never leaves the browser and nothing is recorded. The setting is remembered; the browser asks for microphone access once.
 

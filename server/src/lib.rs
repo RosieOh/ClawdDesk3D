@@ -4,6 +4,7 @@
 pub mod approvals;
 pub mod commands;
 pub mod core;
+pub mod project;
 pub mod transcript;
 pub mod voicelab;
 
@@ -39,7 +40,7 @@ use crate::commands::{Commands, Status as CommandStatus};
 use crate::core::{
     Meta, ROUTE_EVENTS, Session, SessionStore, is_allowed_origin, parse_origin_list,
 };
-use crate::transcript::{TranscriptInfo, allowed_path, config_root, read_tail};
+use crate::transcript::{TranscriptInfo, allowed_path, config_root, read_tail, usage_totals};
 use crate::voicelab::LabInfo;
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(15);
@@ -77,6 +78,8 @@ struct AppState {
     commands: Arc<Mutex<Commands>>,
     /// are you at the desk? (camera presence from the menu bar app; None = unknown / not watching)
     user: Arc<Mutex<Option<UserPresence>>>,
+    /// cwd → repository name (None: not in a repository), so the filesystem is walked once per folder
+    repo_names: Arc<Mutex<std::collections::HashMap<String, Option<String>>>>,
     store: Arc<Mutex<SessionStore>>,
     tx: broadcast::Sender<String>,
     extra_origins: Arc<Vec<String>>,
@@ -276,6 +279,28 @@ async fn apply_hook(
             };
             (prev, s)
         })
+    };
+
+    // Name the session by its repository, and refresh token totals at turn boundaries.
+    let updated = match updated {
+        Some((prev, s)) => {
+            let repo = repo_name_cached(app, &s.cwd);
+            let usage = if USAGE_EVENTS.contains(&event) || prev.is_none() {
+                read_usage(app, payload).await
+            } else {
+                None
+            };
+            let mut store = app.store.lock().unwrap();
+            if let Some(name) = repo {
+                store.set_project(&s.id, &name);
+            }
+            if let Some(u) = usage {
+                store.set_usage(&s.id, u);
+            }
+            let s = store.get(&s.id).cloned().unwrap_or(s);
+            Some((prev, s))
+        }
+        None => None,
     };
 
     if let Some((prev, s)) = updated {
@@ -533,6 +558,33 @@ async fn app_presence(
     StatusCode::NO_CONTENT
 }
 
+/// Events after which the token totals are worth re-counting (a turn or the session ended).
+const USAGE_EVENTS: [&str; 4] = ["Stop", "StopFailure", "SessionEnd", "PostCompact"];
+
+fn repo_name_cached(app: &AppState, cwd: &str) -> Option<String> {
+    if cwd.is_empty() {
+        return None;
+    }
+    let mut cache = app.repo_names.lock().unwrap();
+    cache
+        .entry(cwd.to_string())
+        .or_insert_with(|| project::repo_name(cwd))
+        .clone()
+}
+
+/// Token totals over the whole transcript (blocking file I/O off the async runtime).
+async fn read_usage(app: &AppState, payload: &Value) -> Option<core::Usage> {
+    let root = app.transcript_root.clone()?;
+    let raw = payload.get("transcript_path")?.as_str()?.to_string();
+    tokio::task::spawn_blocking(move || {
+        let path = allowed_path(&raw, &root)?;
+        usage_totals(&path).ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Session details from the transcript the hook points at (blocking file I/O off the async runtime).
 async fn read_transcript(app: &AppState, payload: &Value) -> Option<TranscriptInfo> {
     let root = app.transcript_root.clone()?;
@@ -741,6 +793,7 @@ pub async fn serve(
         voice_lab: Arc::new(Mutex::new(None)),
         commands: Arc::new(Mutex::new(Commands::default())),
         user: Arc::new(Mutex::new(None)),
+        repo_names: Arc::new(Mutex::new(std::collections::HashMap::new())),
         app_approver_until: Arc::new(Mutex::new(None)),
         approval_timeout,
     };

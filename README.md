@@ -40,6 +40,14 @@ Turn on **Camera Presence** in the menu bar app and it watches whether you're at
 
 The detector is a small Swift helper bundled inside the app (`clawddesk-presence`, built by `desktop/build.rs`); macOS asks once for camera access for ClawdDesk.
 
+## Alerts, briefing and room lights
+
+**GitHub alerts.** Every 5 minutes (`CLAWDDESK_GITHUB_INTERVAL`, seconds; `0` turns it off) the bridge asks your own `gh` CLI about the repositories of the sessions it knows: failing CI on your open pull requests, and reviews requested from you anywhere. The first look is a baseline; afterwards anything new is spoken ("Sir, CI failed on pull request ClawdDesk3D #12: …") and notified by the menu bar app. A new commit that fails again counts as new. Nothing leaves your Mac except `gh`'s own calls to GitHub.
+
+**Daily briefing.** The first time the desk wakes up each day (voice turned on, or back at the desk with camera presence), JARVIS greets you by the time of day and sums up: sessions online, your open PRs, failing CI and waiting reviews. Ask for it any time: "briefing", "what's new?", "브리핑". (Calendar is not included: there's no calendar access.)
+
+**Philips Hue.** `npm run hue:pair` finds your bridge (Philips' discovery service, or `-- --ip <address>`), asks you to press its link button and writes `~/.config/clawddesk/hue.json` (mode 600). Restart the bridge and the room follows the desk: warm white with no sessions, amber idle, orange generating, cyan running a tool, pink with one breathing pulse when a permission waits. Pick a room with `-- --group <id>` (the pairing lists them); lights are never switched off, and the bridge sends at most one group command a second over the Hue local API.
+
 ## Approve from the desk
 
 When Claude Code asks for permission (a `PermissionRequest`), the desk shows a card with the project, the tool and what it wants to do (the command, file or URL), a countdown and **Approve / Deny**. The answer goes straight back to Claude Code, which then runs the tool or carries on without it.

@@ -1,0 +1,12 @@
+{
+  "name": "My pack",
+  "volume": 0.9,
+  "clips": {
+    "greeting": ["clips/hello.wav"],
+    "done": ["clips/done-1.wav", "clips/done-2.wav"],
+    "permission": ["clips/need-approval.wav"],
+    "failed": ["clips/error.wav"],
+    "started": ["clips/online.wav"],
+    "ended": ["clips/offline.wav"]
+  }
+}

@@ -24,10 +24,34 @@ Press **V** (or the **VOICE** button) and the desk talks, in English with a calm
 | Claude asks for permission / input | "Sir, I need your authorization to run Bash." |
 | a turn stops with an error (`StopFailure`) | "I'm afraid the task has stopped with an error, sir." |
 | a new session comes online | "web-app is online, sir." |
+| a session ends | "web-app has gone offline, sir." |
 
 With several sessions open, the project is named ("Sir, web-app requires your authorization…"). Every line also appears as a subtitle above the dock, voice on or off, and the core glows in time with the words while it speaks. Quick replies stay silent; dock buttons announce immediately, so the simulator can demo it.
 
 It uses the browser's built-in speech (Web Speech API), so nothing to install. Voice preference: Jamie, then Daniel (British English), downloadable **Premium / Enhanced** versions first when present: on macOS add them under System Settings › Accessibility › Spoken Content › System voice › Manage Voices. Browsers only allow speech after a click or key press, so after a reload the first interaction re-enables it. Voice on/off and language are remembered per browser.
+
+### Voice packs (your own recordings)
+
+Recorded clips can replace the synthesized voice for each kind of announcement. Put a pack in `voicepack/` at the repo root (or point `CLAWDDESK_VOICEPACK` at a folder); the dev and preview servers serve it at `/voicepack/`, it is never bundled, and **`voicepack/` and `assets/` are gitignored**: only use recordings you have the right to use, and keep them out of the repository.
+
+`voicepack/voicepack.json` (see [`voicepack.example.json`](voicepack.example.json)):
+
+```json
+{
+  "name": "My pack",
+  "volume": 0.9,
+  "clips": {
+    "greeting": ["clips/hello.wav"],
+    "done": ["clips/done-1.wav", "clips/done-2.wav"],
+    "permission": ["clips/need-approval.wav"],
+    "failed": ["clips/error.wav"],
+    "started": ["clips/online.wav"],
+    "ended": ["clips/offline.wav"]
+  }
+}
+```
+
+Paths are relative to the pack folder (a symlink inside it to wherever the files live works). Several clips per kind are picked at random without repeating the last one; a kind with no clips falls back to the synthesized voice; the caption always shows the full sentence. WAV, MP3, OGG, M4A/AAC, FLAC and WebM are accepted (not WMA). When a pack is installed, the voice button shows its name; the core glows with the clip's loudness.
 
 ## Which session is on the desk
 

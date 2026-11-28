@@ -89,6 +89,8 @@ interface StoreState extends Derived {
   voiceLang: Lang;
   /** latest announcement, shown as a subtitle whether or not the voice is on */
   caption: { id: number; text: string } | null;
+  /** name of the local voice pack, when one is installed */
+  voicePack: string | null;
 
   setConnected: (c: boolean) => void;
   applySnapshot: (sessions: Session[], reason: string) => void;
@@ -101,6 +103,7 @@ interface StoreState extends Derived {
   setVoice: (on: boolean) => void;
   setVoiceLang: (lang: Lang) => void;
   setCaption: (text: string) => void;
+  setVoicePack: (name: string | null) => void;
 }
 
 // Voice preferences survive reloads (per browser). Storage can be unavailable; the defaults then apply.
@@ -221,6 +224,7 @@ export const useStore = create<StoreState>((set, get) => {
     voiceOn: typeof window !== 'undefined' && readPref(PREF_VOICE) === 'on',
     voiceLang: defaultLang(),
     caption: null,
+    voicePack: null,
 
     setConnected: (connected) => {
       if (connected === get().connected) return;
@@ -275,6 +279,8 @@ export const useStore = create<StoreState>((set, get) => {
       writePref(PREF_LANG, voiceLang);
       set({ voiceLang });
     },
+
+    setVoicePack: (voicePack) => set({ voicePack }),
 
     setCaption: (text) => set({ caption: { id: (get().caption?.id ?? 0) + 1, text } }),
   };

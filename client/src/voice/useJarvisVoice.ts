@@ -5,6 +5,10 @@ import { useEffect } from 'react';
 import { useStore, type Session } from '../store';
 import { Announcer, DEFAULT_MIN_TURN_MS, phrase } from './announcer';
 import { hush, speak, unlockSpeech } from './speech';
+import { loadPack, playClip, stopClips, unlockClips, type VoicePack } from './voicepack';
+
+/** The installed voice pack, if any (loaded once per page). */
+export let voicePack: VoicePack | null = null;
 
 /** Same line again within this window is dropped (e.g. two sessions finishing together). */
 const DEDUPE_MS = 4_000;
@@ -36,12 +40,21 @@ export function useJarvisVoice() {
         lastText = text;
         lastAt = now;
         s.setCaption(text);
-        if (s.voiceOn) speak(text, s.voiceLang);
+        // A recorded clip when the pack has one for this moment; the caption carries the details.
+        if (s.voiceOn && !playClip(voicePack, line.kind)) speak(text, s.voiceLang);
       }
     };
 
     // The current sessions are the baseline: nothing already open gets announced on load.
     run(useStore.getState());
+
+    let alive = true;
+    void loadPack().then((pack) => {
+      if (!alive) return;
+      voicePack = pack;
+      useStore.getState().setVoicePack(pack?.name ?? null);
+      if (pack) console.info(`[voicepack] ${pack.name}: ${Object.keys(pack.clips).join(', ')}`);
+    });
     let awaitingBaseline = false;
 
     const unsubscribe = useStore.subscribe((s, prev) => {
@@ -62,6 +75,7 @@ export function useJarvisVoice() {
     // Speech needs a user gesture once per page load; the first click or key press unlocks it.
     const unlock = () => {
       unlockSpeech();
+      unlockClips();
       window.removeEventListener('pointerdown', unlock);
       window.removeEventListener('keydown', unlock);
     };
@@ -69,6 +83,8 @@ export function useJarvisVoice() {
     window.addEventListener('keydown', unlock);
 
     return () => {
+      alive = false;
+      stopClips();
       unsubscribe();
       window.removeEventListener('pointerdown', unlock);
       window.removeEventListener('keydown', unlock);

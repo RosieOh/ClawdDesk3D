@@ -220,6 +220,7 @@ function StatsPanel() {
   const toggleMute = useStore((s) => s.toggleMute);
   const voiceOn = useStore((s) => s.voiceOn);
   const voiceLang = useStore((s) => s.voiceLang);
+  const voicePack = useStore((s) => s.voicePack);
   const canSpeak = speechSupported();
 
   const focus = focusAccum + (focusSince ? now - focusSince : 0);
@@ -248,10 +249,10 @@ function StatsPanel() {
                 className={`rounded-lg border px-2 py-1 font-mono text-[10px] tracking-wider ${
                   voiceOn ? 'border-sky-300/40 bg-sky-300/15 text-sky-200' : 'border-white/15 bg-white/5 text-white/70 hover:bg-white/10'
                 }`}
-                title="Spoken announcements (V)"
+                title={voicePack ? `Spoken announcements (V) · voice pack: ${voicePack}` : 'Spoken announcements (V)'}
                 data-testid="voice-toggle"
               >
-                {voiceOn ? '🗣 VOICE' : '🤐 VOICE'}
+                {voiceOn ? '🗣' : '🤐'} {voicePack ? voicePack.toUpperCase() : 'VOICE'}
               </button>
               <button
                 onClick={cycleVoiceLang}

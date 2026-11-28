@@ -14,6 +14,23 @@ Claude Code ──hooks (HTTP POST)──▶ bridge :3001 (Rust, axum) ──Web
 | `GENERATING` | `UserPromptSubmit`, `PostToolUse(Failure)` (last tool done), `ElicitationResult`, `PostCompact` after auto-compaction | counter-spinning gyroscope, bloom, token fountain, keyboard clacking |
 | `TOOL_RUNNING` | `PreToolUse` (stays until *every* parallel tool is done), `PreCompact` | cyan (emerald for Edit/Write) laser scanning the code cube, rack LEDs, tool badge (`Bash +1` when several run) |
 
+## Menu bar app (macOS)
+
+`ClawdDesk.app` runs the whole thing as a menu bar app: the bridge (or the one already running, e.g. `npm run dev`), the desk in a window, and a status dot in the menu bar.
+
+```bash
+npm run app:install     # build ClawdDesk.app and copy it to ~/Applications (opens it)
+```
+
+- **Menu bar dot**: amber idle, orange generating, cyan running a tool, pink when something needs you; a number next to it counts waiting permission requests. Its menu lists the sessions (project, state, model) and pending requests with **Approve / Deny**.
+- **Open the desk** with ⌥⌘J from anywhere, from the menu, or by launching ClawdDesk again (Spotlight). Closing the window just hides it; the app stays in the menu bar (no Dock icon).
+- **Notifications** while the desk is hidden: a permission request waiting, a task that took 30 s or more finished, or a turn that stopped with an error.
+- **Answer Permissions from the Menu Bar** (menu toggle, off by default): also hold permission requests while the desk is hidden, so they can be answered from the menu or after a notification. Off, only a visible desk holds them.
+- **Launch at Login** (menu toggle): starts in the menu bar only, with the bridge always on.
+- The app accepts the desk from its own webview origin (`tauri://localhost`); voice, captions and clap detection work in its window as in the browser.
+
+Built with Tauri 2 (no Xcode needed, just the Command Line Tools). The bundle is ad-hoc signed for this Mac.
+
 ## Approve from the desk
 
 When Claude Code asks for permission (a `PermissionRequest`), the desk shows a card with the project, the tool and what it wants to do (the command, file or URL), a countdown and **Approve / Deny**. The answer goes straight back to Claude Code, which then runs the tool or carries on without it.
@@ -184,6 +201,7 @@ scripts/hooks.mjs        hook installer / uninstaller (+ hooks.test.mjs)
 scripts/dev-bridge.mjs   dev runner: rebuild + restart the bridge on change
 scripts/test-hooks.sh    fake session lifecycle
 voice-lab/               local voice cloning server (F5-TTS / MLX) + reference recorder
+desktop/                 menu bar app (Tauri 2): bridge, desk window, tray, notifications, ⌥⌘J
 client/src/voice/        announcer, speech engines (browser, voice pack, voice lab), captions
 client/src/sensors/      double-clap detector (AudioWorklet + pure detector)
 .github/workflows/ci.yml CI: rustfmt, clippy, cargo test, client typecheck/tests/build

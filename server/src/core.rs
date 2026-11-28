@@ -224,6 +224,8 @@ pub fn is_attention_notification(p: &Value) -> bool {
 // ---------------------------------------------------------------- origin policy
 
 const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
+/// The ClawdDesk desktop app's webview (Tauri serves the desk from these origins on macOS / Windows).
+const DESKTOP_APP_ORIGINS: [&str; 2] = ["tauri://localhost", "http://tauri.localhost"];
 
 /// Browser requests carry an Origin; Claude Code hooks and curl don't.
 /// Only loopback pages (the dev client, any port) plus explicitly listed origins may talk to the bridge,
@@ -232,7 +234,7 @@ pub fn is_allowed_origin(origin: Option<&str>, extra: &[String]) -> bool {
     let Some(origin) = origin.filter(|o| !o.is_empty()) else {
         return true;
     };
-    if extra.iter().any(|e| e == origin) {
+    if extra.iter().any(|e| e == origin) || DESKTOP_APP_ORIGINS.contains(&origin) {
         return true;
     }
     // includes the literal "null" origin
@@ -268,6 +270,10 @@ impl SessionStore {
 
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn get(&self, id: &str) -> Option<&Session> {
@@ -905,6 +911,11 @@ mod tests {
         ));
         assert!(!is_allowed_origin(Some("null"), &none));
         assert!(!is_allowed_origin(Some("file://"), &none));
+        assert!(
+            is_allowed_origin(Some("tauri://localhost"), &none),
+            "desktop app"
+        );
+        assert!(!is_allowed_origin(Some("tauri://evil"), &none));
         assert!(is_allowed_origin(
             Some("https://desk.example"),
             &["https://desk.example".to_string()]

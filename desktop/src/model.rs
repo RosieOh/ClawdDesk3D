@@ -43,10 +43,38 @@ impl Approval {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Alert {
+    pub id: String,
+    pub kind: String,
+    pub repo: String,
+    pub number: u64,
+    #[serde(default)]
+    pub title: String,
+}
+
+impl Alert {
+    /// Notification title and body.
+    pub fn notification(&self) -> (String, String) {
+        let repo = self.repo.rsplit('/').next().unwrap_or(&self.repo);
+        let head = if self.kind == "ci_failed" {
+            "CI failed"
+        } else {
+            "Review requested"
+        };
+        (
+            format!("{head}: {repo} #{}", self.number),
+            self.title.clone(),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Snapshot {
     pub sessions: Vec<Session>,
     #[serde(default)]
     pub approvals: Vec<Approval>,
+    #[serde(default)]
+    pub alerts: Vec<Alert>,
 }
 
 impl Snapshot {
@@ -61,6 +89,7 @@ pub struct View {
     /// most recent first, ended sessions dropped
     pub sessions: Vec<Session>,
     pub approvals: Vec<Approval>,
+    pub alerts: Vec<Alert>,
 }
 
 impl From<Option<&Snapshot>> for View {
@@ -77,6 +106,7 @@ impl From<Option<&Snapshot>> for View {
             reachable: true,
             sessions,
             approvals: s.approvals.clone(),
+            alerts: s.alerts.clone(),
         }
     }
 }

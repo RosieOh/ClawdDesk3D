@@ -1,6 +1,6 @@
 // Decides what the desk should say, from successive session snapshots. Pure logic: no audio, no DOM.
 
-import type { AgentState, Session } from '../store';
+import type { AgentState, Alert, GitHubOverview, Session } from '../store';
 
 export type Lang = 'ko' | 'en';
 
@@ -98,6 +98,54 @@ export function statusReport(sessions: Session[], lang: Lang): string {
   if (waiting.length) parts.push(`${joinNames(waiting, lang)} ${waiting.length === 1 ? 'is' : 'are'} waiting for your approval.`);
   if (working.length) parts.push(`${joinNames(working, lang)} ${working.length === 1 ? 'is' : 'are'} working.`);
   if (!waiting.length && !working.length) parts.push(n === 1 ? 'It is standing by.' : 'All are standing by.');
+  return parts.join(' ');
+}
+
+// ---------------------------------------------------------------- GitHub alerts and the briefing
+
+
+const repoShort = (repo: string) => repo.split('/').pop() ?? repo;
+
+export function alertPhrase(a: Alert, lang: Lang): string {
+  const where = `${repoShort(a.repo)} #${a.number}`;
+  if (lang === 'ko') {
+    return a.kind === 'ci_failed' ? `${where} 풀 리퀘스트의 CI가 실패했습니다.` : `${where}에 리뷰 요청이 왔습니다: ${a.title}`;
+  }
+  return a.kind === 'ci_failed'
+    ? `Sir, CI failed on pull request ${where}: ${a.title}.`
+    : `Sir, your review was requested on ${where}: ${a.title}.`;
+}
+
+function partOfDay(hour: number, lang: Lang): string {
+  if (lang === 'ko') return hour < 12 ? '좋은 아침입니다.' : hour < 18 ? '좋은 오후입니다.' : '좋은 저녁입니다.';
+  return hour < 12 ? 'Good morning, sir.' : hour < 18 ? 'Good afternoon, sir.' : 'Good evening, sir.';
+}
+
+/** The daily briefing: greeting, sessions, and what's waiting on GitHub. */
+export function briefing(gh: GitHubOverview | null, sessions: Session[], lang: Lang, hour = new Date().getHours()): string {
+  const parts = [partOfDay(hour, lang)];
+  const live = sessions.filter((s) => s.state !== 'OFFLINE').length;
+  const ci = gh?.ciFailing ?? [];
+  const reviews = gh?.reviewRequested ?? [];
+  const named = (list: { repo: string; number: number }[]) =>
+    list.slice(0, 2).map((f) => `${repoShort(f.repo)} #${f.number}`).join(lang === 'ko' ? ', ' : ' and ');
+  if (lang === 'ko') {
+    parts.push(live ? `Claude 세션 ${live}개가 연결되어 있습니다.` : '연결된 Claude 세션은 없습니다.');
+    if (gh) {
+      if (gh.openPrs) parts.push(`열린 풀 리퀘스트가 ${gh.openPrs}개 있습니다.`);
+      if (ci.length) parts.push(`${named(ci)}의 CI가 실패한 상태입니다.`);
+      if (reviews.length) parts.push(`리뷰 요청이 ${reviews.length}건 기다리고 있습니다${reviews.length ? `: ${named(reviews)}` : ''}.`);
+      if (!gh.openPrs && !ci.length && !reviews.length) parts.push('GitHub 에는 기다리는 일이 없습니다.');
+    }
+    return parts.join(' ');
+  }
+  parts.push(live ? `${live} Claude session${live === 1 ? ' is' : 's are'} online.` : 'No Claude sessions are running.');
+  if (gh) {
+    if (gh.openPrs) parts.push(`You have ${gh.openPrs} open pull request${gh.openPrs === 1 ? '' : 's'}.`);
+    if (ci.length) parts.push(`CI is failing on ${named(ci)}.`);
+    if (reviews.length) parts.push(`${reviews.length} review${reviews.length === 1 ? ' is' : 's are'} waiting for you, including ${named(reviews)}.`);
+    if (!gh.openPrs && !ci.length && !reviews.length) parts.push('Nothing is waiting for you on GitHub.');
+  }
   return parts.join(' ');
 }
 

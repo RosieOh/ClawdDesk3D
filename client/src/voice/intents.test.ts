@@ -13,6 +13,7 @@ describe('parseIntent', () => {
       expect(parseIntent(t), t).toEqual({ kind: 'status' });
     for (const t of ['Be quiet.', 'mute', '조용히 해줘']) expect(parseIntent(t), t).toEqual({ kind: 'mute' });
     for (const t of ['never mind', 'Cancel.', '취소']) expect(parseIntent(t), t).toEqual({ kind: 'cancel' });
+    for (const t of ['Jarvis, briefing', "What's new?", '브리핑 해줘']) expect(parseIntent(t), t).toEqual({ kind: 'briefing' });
   });
 
   it('sends everything else to Claude, wake word removed', () => {

@@ -4,6 +4,8 @@
 pub mod approvals;
 pub mod commands;
 pub mod core;
+pub mod github;
+pub mod hue;
 pub mod project;
 pub mod transcript;
 pub mod voicelab;
@@ -32,7 +34,10 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use tokio::{net::TcpListener, sync::broadcast};
+use tokio::{
+    net::TcpListener,
+    sync::{broadcast, watch},
+};
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 
 use crate::approvals::{Approvals, Behavior, Pending, decision_output, summarize};
@@ -78,6 +83,10 @@ struct AppState {
     commands: Arc<Mutex<Commands>>,
     /// are you at the desk? (camera presence from the menu bar app; None = unknown / not watching)
     user: Arc<Mutex<Option<UserPresence>>>,
+    /// GitHub alerts and briefing data (via the user's `gh`)
+    github: Arc<Mutex<github::GitHub>>,
+    /// the room lights' mood (Philips Hue), when configured
+    hue: Option<Arc<watch::Sender<hue::Mood>>>,
     /// cwd → repository name (None: not in a repository), so the filesystem is walked once per folder
     repo_names: Arc<Mutex<std::collections::HashMap<String, Option<String>>>>,
     store: Arc<Mutex<SessionStore>>,
@@ -108,46 +117,55 @@ fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-fn snapshot(
-    reason: &str,
-    sessions: Vec<Session>,
-    approvals: Vec<Pending>,
-    voice_lab: Option<LabInfo>,
-    commands: Vec<commands::Command>,
-    user: Option<UserPresence>,
-) -> String {
-    json!({
-        "type": "snapshot",
-        "reason": reason,
-        "serverTime": now_ms(),
-        "sessions": sessions,
-        "approvals": approvals,
-        "voiceLab": voice_lab,
-        "commands": commands,
-        "user": user,
-    })
-    .to_string()
-}
-
 impl AppState {
     fn snapshot(&self, reason: &str) -> String {
         let sessions = self.store.lock().unwrap().list();
         let approvals = self.approvals.lock().unwrap().list();
         let voice_lab = self.voice_lab.lock().unwrap().clone();
         let commands = self.commands.lock().unwrap().list();
-        snapshot(
-            reason,
-            sessions,
-            approvals,
-            voice_lab,
-            commands,
-            self.user_presence(),
-        )
+        let (alerts, github) = {
+            let gh = self.github.lock().unwrap();
+            (gh.alerts(), gh.overview.clone())
+        };
+        json!({
+            "type": "snapshot",
+            "reason": reason,
+            "serverTime": now_ms(),
+            "sessions": sessions,
+            "approvals": approvals,
+            "voiceLab": voice_lab,
+            "commands": commands,
+            "user": self.user_presence(),
+            "alerts": alerts,
+            "github": github,
+        })
+        .to_string()
     }
 
     fn broadcast(&self, reason: &str) {
         // Err only means nobody is connected.
         let _ = self.tx.send(self.snapshot(reason));
+        self.update_lights();
+    }
+
+    /// The room's mood: a waiting permission wins, else the most recently active session.
+    fn update_lights(&self) {
+        let Some(hue) = &self.hue else { return };
+        let sessions = self.store.lock().unwrap().list(); // most recent first
+        let waiting = !self.approvals.lock().unwrap().list().is_empty()
+            || sessions
+                .iter()
+                .any(|s| s.state == core::AgentState::Waiting);
+        let state = sessions
+            .iter()
+            .find(|s| s.state != core::AgentState::Offline)
+            .map_or("OFFLINE", |s| s.state.as_str());
+        let mood = hue::Mood::from_state(state, waiting);
+        hue.send_if_modified(|m| {
+            let changed = *m != mood;
+            *m = mood;
+            changed
+        });
     }
 
     fn origin_ok(&self, origin: Option<&str>) -> bool {
@@ -714,6 +732,8 @@ pub struct Options {
     pub extra_origins: Vec<String>,
     pub approval_timeout: Duration,
     pub voice_lab_url: String,
+    /// how often to check GitHub for failing CI / review requests (zero: never)
+    pub github_interval: Duration,
 }
 
 impl Default for Options {
@@ -724,6 +744,7 @@ impl Default for Options {
             extra_origins: Vec::new(),
             approval_timeout: DEFAULT_APPROVAL_TIMEOUT,
             voice_lab_url: voicelab::DEFAULT_URL.into(),
+            github_interval: github::DEFAULT_INTERVAL,
         }
     }
 }
@@ -744,6 +765,10 @@ impl Options {
                 .map(Duration::from_secs)
                 .unwrap_or(d.approval_timeout),
             voice_lab_url: env("CLAWDDESK_VOICE_LAB").unwrap_or(d.voice_lab_url),
+            github_interval: env("CLAWDDESK_GITHUB_INTERVAL")
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(Duration::from_secs)
+                .unwrap_or(d.github_interval),
         }
     }
 }
@@ -777,7 +802,18 @@ pub async fn serve(
         extra_origins,
         approval_timeout,
         voice_lab_url,
+        github_interval,
     } = opts;
+    // Philips Hue, when paired (`npm run hue:pair`).
+    let hue = hue::load_config().map(|cfg| {
+        println!(
+            "[hue] lights follow the desk (bridge {}, group {})",
+            cfg.bridge, cfg.group
+        );
+        let (tx, rx) = watch::channel(hue::Mood::Rest);
+        tokio::spawn(hue::run(cfg, rx));
+        Arc::new(tx)
+    });
     let extra_origins = Arc::new(extra_origins);
 
     let (tx, _) = broadcast::channel(64);
@@ -794,6 +830,8 @@ pub async fn serve(
         commands: Arc::new(Mutex::new(Commands::default())),
         user: Arc::new(Mutex::new(None)),
         repo_names: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        github: Arc::new(Mutex::new(github::GitHub::default())),
+        hue,
         app_approver_until: Arc::new(Mutex::new(None)),
         approval_timeout,
     };
@@ -847,6 +885,54 @@ pub async fn serve(
                     }
                     app.broadcast("voicelab");
                 }
+            }
+        });
+    }
+
+    // GitHub watcher: failing CI on your PRs and review requests, for alerts and the briefing.
+    if !github_interval.is_zero()
+        && let Some(gh) = github::find_gh()
+    {
+        let app = app.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(10)).await; // let sessions register first
+            loop {
+                let cwds: Vec<String> = {
+                    let store = app.store.lock().unwrap();
+                    store
+                        .list()
+                        .into_iter()
+                        .map(|s| s.cwd)
+                        .filter(|c| !c.is_empty())
+                        .collect()
+                };
+                let mut repos: Vec<String> = Vec::new();
+                for cwd in cwds {
+                    let cached = app.github.lock().unwrap().cached_repo(&cwd);
+                    let repo = match cached {
+                        Some(r) => r,
+                        None => {
+                            let r = github::repo_for(&gh, &cwd).await;
+                            app.github.lock().unwrap().remember_repo(&cwd, r.clone());
+                            r
+                        }
+                    };
+                    if let Some(r) = repo
+                        && !repos.contains(&r)
+                    {
+                        repos.push(r);
+                    }
+                }
+                let overview = github::poll(&gh, &repos, now_ms()).await;
+                let fresh = app.github.lock().unwrap().record(overview, now_ms());
+                for a in &fresh {
+                    println!(
+                        "[github] {:?} {}#{} {}",
+                        a.finding.kind, a.finding.repo, a.finding.number, a.finding.title
+                    );
+                }
+                app.broadcast(if fresh.is_empty() { "github" } else { "alert" });
+                tokio::time::sleep(github_interval).await;
             }
         });
     }

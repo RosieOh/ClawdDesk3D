@@ -3,7 +3,8 @@
 
 import { useEffect } from 'react';
 import { useStore, type Session } from '../store';
-import { Announcer, DEFAULT_MIN_TURN_MS, phrase, welcomeBack } from './announcer';
+import { Announcer, DEFAULT_MIN_TURN_MS, alertPhrase, phrase, welcomeBack } from './announcer';
+import { maybeBrief } from './briefing';
 import { away, engines, sayLine } from './say';
 
 /** Only greet on return after being away at least this long. */
@@ -64,6 +65,9 @@ export function useJarvisVoice() {
     let awaitingBaseline = false;
 
     let awaySince: number | null = null;
+    // GitHub alerts already shown (the first list after load / reconnect is old news).
+    const seenAlerts = new Set(useStore.getState().alerts.map((a) => a.id));
+    let alertsBaseline = useStore.getState().connected;
 
     const unsubscribe = useStore.subscribe((s, prev) => {
       // Camera presence: hold the lines while you're away, then welcome you back with them.
@@ -81,6 +85,7 @@ export function useJarvisVoice() {
             s.setCaption(text);
             sayLine('greeting', text, s.voiceLang);
           }
+          if (s.userPresent === true) maybeBrief();
         }
       }
       if (s.connected !== prev.connected) {
@@ -88,6 +93,23 @@ export function useJarvisVoice() {
         announcer.reset();
         awaitingBaseline = true;
       }
+      // GitHub alerts that just appeared (failing CI on your PRs, reviews requested from you).
+      if (s.alerts !== prev.alerts) {
+        if (!alertsBaseline) {
+          s.alerts.forEach((a) => seenAlerts.add(a.id));
+          alertsBaseline = true;
+        } else {
+          const fresh = s.alerts.filter((a) => !seenAlerts.has(a.id));
+          fresh.forEach((a) => seenAlerts.add(a.id));
+          for (const a of fresh.slice(0, 2)) {
+            const text = alertPhrase(a, s.voiceLang);
+            s.setCaption(text);
+            if (s.voiceOn) sayLine(null, text, s.voiceLang);
+          }
+        }
+      }
+      if (s.connected !== prev.connected && !s.connected) alertsBaseline = false;
+
       // Commands this desk sent: report Claude's answer when they finish.
       if (s.commands !== prev.commands) {
         for (const c of s.commands) {

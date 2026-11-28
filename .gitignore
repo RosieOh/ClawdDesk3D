@@ -12,3 +12,6 @@ voicepack/
 voice-lab/.venv/
 voice-lab/my-voice/
 voice-lab/cache/
+
+# Tauri generated files
+desktop/gen/

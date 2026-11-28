@@ -3,8 +3,11 @@
 
 import { useEffect } from 'react';
 import { useStore, type Session } from '../store';
-import { Announcer, DEFAULT_MIN_TURN_MS, phrase } from './announcer';
-import { engines, sayLine } from './say';
+import { Announcer, DEFAULT_MIN_TURN_MS, phrase, welcomeBack } from './announcer';
+import { away, engines, sayLine } from './say';
+
+/** Only greet on return after being away at least this long. */
+const WELCOME_AFTER_MS = 60_000;
 import { ownCommands, reportCommand } from './assistant';
 import { hush, unlockSpeech } from './speech';
 import { loadPack, stopClips, unlockClips } from './voicepack';
@@ -60,7 +63,26 @@ export function useJarvisVoice() {
 
     let awaitingBaseline = false;
 
+    let awaySince: number | null = null;
+
     const unsubscribe = useStore.subscribe((s, prev) => {
+      // Camera presence: hold the lines while you're away, then welcome you back with them.
+      if (s.userPresent !== prev.userPresent) {
+        if (s.userPresent === false) {
+          away.active = true;
+          awaySince = Date.now();
+        } else if (away.active) {
+          away.active = false;
+          const lines = away.lines.splice(0);
+          const long = awaySince != null && Date.now() - awaySince >= WELCOME_AFTER_MS;
+          awaySince = null;
+          if (s.userPresent === true && (long || lines.length) && s.voiceOn) {
+            const text = welcomeBack(lines, s.voiceLang);
+            s.setCaption(text);
+            sayLine('greeting', text, s.voiceLang);
+          }
+        }
+      }
       if (s.connected !== prev.connected) {
         // Switching between simulator and live: the next session list is a fresh baseline.
         announcer.reset();

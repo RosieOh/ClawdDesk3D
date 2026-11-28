@@ -67,6 +67,7 @@ export function connectBridge(): () => void {
           approvals?: Approval[];
           commands?: DeskCommand[];
           voiceLab?: { voice: string | null; ready: boolean; tts?: boolean; stt?: boolean } | null;
+          user?: { present: boolean; since: number } | null;
         };
         if (msg.type !== 'snapshot') return;
         const s = useStore.getState();
@@ -75,6 +76,7 @@ export function connectBridge(): () => void {
         const lab = msg.voiceLab;
         s.setVoiceLab(lab?.ready && lab.tts !== false ? (lab.voice ?? 'my voice') : null);
         s.setStt(Boolean(lab?.stt));
+        s.setUserPresent(msg.user ? msg.user.present : null);
       } catch {
         /* ignore malformed frames */
       }
@@ -83,6 +85,7 @@ export function connectBridge(): () => void {
       useStore.getState().setConnected(false);
       useStore.getState().setVoiceLab(null);
       useStore.getState().setStt(false);
+      useStore.getState().setUserPresent(null);
       schedule();
     };
     ws.onerror = () => ws?.close();
@@ -96,17 +99,23 @@ export function connectBridge(): () => void {
 
   // Tell the bridge whether this desk can answer permission requests right now: only while it's on screen,
   // so a forgotten background tab never makes Claude Code wait.
+  // …and only while you're there: when the camera says you've stepped away, it stops taking them.
   const sendPresence = () => {
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'presence', approvals: document.visibilityState === 'visible' }));
+      const approvals = document.visibilityState === 'visible' && useStore.getState().userPresent !== false;
+      ws.send(JSON.stringify({ type: 'presence', approvals }));
     }
   };
   document.addEventListener('visibilitychange', sendPresence);
+  const unsubscribePresence = useStore.subscribe((s, prev) => {
+    if (s.userPresent !== prev.userPresent) sendPresence();
+  });
 
   open();
   return () => {
     disposed = true;
     document.removeEventListener('visibilitychange', sendPresence);
+    unsubscribePresence();
     window.clearTimeout(timer);
     if (ws) {
       const sock = ws;
